@@ -246,23 +246,33 @@ export const exportStockHistory = async (req, res) => {
       .populate("userId", "email")
       .sort({ date: -1 });
 
+    const safe = (val) => {
+      const s = val === null || val === undefined ? "" : String(val);
+      // remove line breaks + escape quotes
+      return `"${s.replace(/\r?\n|\r/g, " ").replace(/"/g, '""')}"`;
+    };
+
     let csv =
       "Product,SKU,Type,StockType,Condition,Quantity,Source,PurchasePrice,InvoiceNo,InvoicePDF,Remarks,Date,User\n";
 
     logs.forEach((l) => {
-      csv += `"${l.productId?.name || ""}",
-"${l.productId?.sku || ""}",
-"${l.type || ""}",
-"${l.stockType || ""}",
-"${l.condition || ""}",
-${l.quantity || 0},
-"${l.source || ""}",
-${l.purchasePrice || 0},
-"${l.invoiceNo || ""}",
-"${l.invoicePdfUrl || ""}",
-"${(l.remarks || "").replace(/"/g, '""')}",
-"${l.date ? l.date.toISOString().split("T")[0] : ""}",
-"${l.userId?.email || ""}"\n`;
+      const row = [
+        safe(l.productId?.name),
+        safe(l.productId?.sku),
+        safe(l.type),
+        safe(l.stockType),
+        safe(l.condition),
+        safe(l.quantity),
+        safe(l.source),
+        safe(l.purchasePrice),
+        safe(l.invoiceNo),
+        safe(l.invoicePdfUrl),
+        safe(l.remarks),
+        safe(l.date ? l.date.toISOString().split("T")[0] : ""),
+        safe(l.userId?.email),
+      ].join(",");
+
+      csv += row + "\n";
     });
 
     res.setHeader("Content-Type", "text/csv");
