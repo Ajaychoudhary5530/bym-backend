@@ -8,9 +8,15 @@ import StockLog from "../models/StockLog.js";
 
 const router = express.Router();
 
-// ⚠️ DELETE ALL DATA (ONLY ADMIN)
+// ⚠️ DELETE ALL DATA (ONLY ADMIN) - DISABLED IN PRODUCTION
 router.delete("/all", protect, adminOnly, async (req, res) => {
   try {
+    if (process.env.NODE_ENV === "production") {
+      return res
+        .status(403)
+        .json({ message: "Reset is disabled in production" });
+    }
+
     await StockLog.deleteMany({});
     await Inventory.deleteMany({});
     await Product.deleteMany({});
