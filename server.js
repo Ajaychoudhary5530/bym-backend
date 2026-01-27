@@ -26,14 +26,14 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173",
-      "https://your-vercel-app.vercel.app",
-      "https://www.bym.co.in"
+      "https://bym.vercel.app",        // ← your Vercel frontend
+      "https://www.bym.co.in"          // ← your custom domain (future-proof)
     ],
+    methods: ["GET", "POST", "PUT", "DELETE"],
     credentials: true,
   })
 );
 
-app.use(express.json());
 
 /* =========================
    STATIC FILES (PDF PREVIEW)
