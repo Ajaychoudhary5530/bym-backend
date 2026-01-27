@@ -13,35 +13,34 @@ import productBulkRoutes from "./routes/productBulkRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import resetRoutes from "./routes/resetRoutes.js";
 
-
 dotenv.config();
 connectDB();
 
 const app = express();
 
 /* =========================
-   MIDDLEWARE
+   🔥 REQUIRED MIDDLEWARE
 ========================= */
+app.use(express.json()); // ✅ MISSING EARLIER
+
 app.use(
   cors({
     origin: [
       "http://localhost:5173",
-      "https://bym.vercel.app",        // ← your Vercel frontend
-      "https://www.bym.co.in"          // ← your custom domain (future-proof)
+      "https://bym-frontend.vercel.app",
+      "https://www.bym.co.in"
     ],
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
   })
 );
 
-
 /* =========================
-   STATIC FILES (PDF PREVIEW)
+   STATIC FILES
 ========================= */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// This allows PDF preview in browser
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 /* =========================
@@ -55,7 +54,9 @@ app.use("/api/products", productBulkRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/admin/reset", resetRoutes);
 
-
+/* =========================
+   HEALTH CHECK
+========================= */
 app.get("/", (req, res) => {
   res.send("Inventory API Running");
 });
