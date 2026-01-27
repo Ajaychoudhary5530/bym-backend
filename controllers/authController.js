@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import OTP from "../models/OTP.js";
-import { sendOTPEmail } from "../utils/sendEmail.js";
+// import { sendOTPEmail } from "../utils/sendEmail.js"; // ❌ disabled for now
 
 /**
  * SEND OTP
@@ -32,15 +32,24 @@ export const sendOTP = async (req, res) => {
         otp,
         expiresAt: new Date(Date.now() + 5 * 60 * 1000)
       },
-      { upsert: true }
+      { upsert: true, new: true }
     );
 
-    await sendOTPEmail(email, otp);
+    // ❌ EMAIL DISABLED (was causing pending request on Render)
+    // await sendOTPEmail(email, otp);
 
-    res.json({ message: "OTP sent" });
+    console.log("OTP GENERATED (DEV):", otp);
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent successfully"
+    });
   } catch (error) {
     console.error("SEND OTP ERROR:", error);
-    res.status(500).json({ message: "Failed to send OTP" });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send OTP"
+    });
   }
 };
 
@@ -51,7 +60,12 @@ export const verifyOTP = async (req, res) => {
   try {
     const { email, otp } = req.body;
 
+    if (!email || !otp) {
+      return res.status(400).json({ message: "Email and OTP required" });
+    }
+
     const record = await OTP.findOne({ email });
+
     if (!record) {
       return res.status(400).json({ message: "OTP not found" });
     }
@@ -61,10 +75,12 @@ export const verifyOTP = async (req, res) => {
     }
 
     if (record.expiresAt < new Date()) {
+      await OTP.deleteOne({ email });
       return res.status(400).json({ message: "OTP expired" });
     }
 
     const user = await User.findOne({ email, isActive: true });
+
     if (!user) {
       return res.status(403).json({ message: "Access denied" });
     }
@@ -77,7 +93,8 @@ export const verifyOTP = async (req, res) => {
       { expiresIn: "1d" }
     );
 
-    res.json({
+    return res.status(200).json({
+      success: true,
       token,
       user: {
         id: user._id,
@@ -87,6 +104,9 @@ export const verifyOTP = async (req, res) => {
     });
   } catch (error) {
     console.error("VERIFY OTP ERROR:", error);
-    res.status(500).json({ message: "OTP verification failed" });
+    return res.status(500).json({
+      success: false,
+      message: "OTP verification failed"
+    });
   }
 };
