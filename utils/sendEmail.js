@@ -5,21 +5,18 @@ export const sendOTPEmail = async (toEmail, otp) => {
     console.log("📧 Sending OTP to:", toEmail);
 
     const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST,
-      port: Number(process.env.EMAIL_PORT),
-      secure: false, // true only for port 465
+      host: "smtp.gmail.com",
+      port: 465,          // ✅ IMPORTANT
+      secure: true,       // ✅ MUST be true for 465
       auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
+        pass: process.env.EMAIL_PASS, // Gmail APP password
       },
 
-      // 🔥 CRITICAL: prevent hanging requests
-      connectionTimeout: 10000, // 10 sec
-      greetingTimeout: 10000,
+      // Prevent hanging forever
+      connectionTimeout: 10000,
       socketTimeout: 10000,
     });
-
-    // ❌ DO NOT use transporter.verify() on Render
 
     await transporter.sendMail({
       from: `"BYM Inventory" <${process.env.EMAIL_USER}>`,
@@ -31,16 +28,15 @@ export const sendOTPEmail = async (toEmail, otp) => {
           <p>Your OTP is:</p>
           <h1 style="letter-spacing: 4px">${otp}</h1>
           <p>This OTP is valid for <b>5 minutes</b>.</p>
-          <br/>
-          <p>If you did not request this, please ignore.</p>
+          <p>If you did not request this, ignore this email.</p>
         </div>
       `,
     });
 
-    console.log("✅ OTP email sent successfully");
+    console.log("✅ OTP EMAIL SENT");
     return true;
   } catch (error) {
     console.error("❌ EMAIL SEND ERROR:", error.message);
-    throw new Error("Email sending failed");
+    throw error;
   }
 };
