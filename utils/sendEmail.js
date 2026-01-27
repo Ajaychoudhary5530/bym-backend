@@ -1,26 +1,14 @@
-import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
+
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 export const sendOTPEmail = async (toEmail, otp) => {
   try {
-    console.log("📧 Sending OTP to:", toEmail);
+    console.log("📧 Sending OTP via SendGrid to:", toEmail);
 
-    const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,          // ✅ IMPORTANT
-      secure: true,       // ✅ MUST be true for 465
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS, // Gmail APP password
-      },
-
-      // Prevent hanging forever
-      connectionTimeout: 10000,
-      socketTimeout: 10000,
-    });
-
-    await transporter.sendMail({
-      from: `"BYM Inventory" <${process.env.EMAIL_USER}>`,
+    const msg = {
       to: toEmail,
+      from: process.env.EMAIL_FROM, // MUST match verified sender
       subject: "Your BYM Inventory Login OTP",
       html: `
         <div style="font-family: Arial, sans-serif">
@@ -31,12 +19,13 @@ export const sendOTPEmail = async (toEmail, otp) => {
           <p>If you did not request this, ignore this email.</p>
         </div>
       `,
-    });
+    };
 
-    console.log("✅ OTP EMAIL SENT");
+    await sgMail.send(msg);
+    console.log("✅ OTP EMAIL SENT (SENDGRID)");
     return true;
   } catch (error) {
-    console.error("❌ EMAIL SEND ERROR:", error.message);
+    console.error("❌ SENDGRID ERROR:", error.response?.body || error.message);
     throw error;
   }
 };
