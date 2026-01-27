@@ -13,40 +13,35 @@ import productBulkRoutes from "./routes/productBulkRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import resetRoutes from "./routes/resetRoutes.js";
 
+
 dotenv.config();
 connectDB();
 
 const app = express();
 
 /* =========================
-   CORS (FIXED)
+   MIDDLEWARE
 ========================= */
-app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "https://bym-frontend.vercel.app", // ✅ ACTUAL VERCEL DOMAIN
-    "https://bym.vercel.app",
-    "https://www.bym.co.in"
-  ],
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",
+      "https://bym.vercel.app",        // ← your Vercel frontend
+      "https://www.bym.co.in"          // ← your custom domain (future-proof)
+    ],
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  })
+);
 
-// ✅ VERY IMPORTANT (preflight fix)
-app.options("*", cors());
 
 /* =========================
-   BODY PARSER
-========================= */
-app.use(express.json());
-
-/* =========================
-   STATIC FILES
+   STATIC FILES (PDF PREVIEW)
 ========================= */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// This allows PDF preview in browser
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 /* =========================
@@ -59,6 +54,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/products", productBulkRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/admin/reset", resetRoutes);
+
 
 app.get("/", (req, res) => {
   res.send("Inventory API Running");
