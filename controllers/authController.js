@@ -1,11 +1,10 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import OTP from "../models/OTP.js";
-// import { sendOTPEmail } from "../utils/sendEmail.js"; // ❌ disabled for now
+import { sendOTPEmail } from "../utils/sendEmail.js";
 
 /**
  * SEND OTP
- * Only for EXISTING users
  */
 export const sendOTP = async (req, res) => {
   try {
@@ -19,7 +18,7 @@ export const sendOTP = async (req, res) => {
 
     if (!user) {
       return res.status(403).json({
-        message: "Access denied. Contact admin."
+        message: "Access denied. Contact admin.",
       });
     }
 
@@ -30,25 +29,29 @@ export const sendOTP = async (req, res) => {
       {
         email,
         otp,
-        expiresAt: new Date(Date.now() + 5 * 60 * 1000)
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
       },
       { upsert: true, new: true }
     );
 
-    // ❌ EMAIL DISABLED (was causing pending request on Render)
-    // await sendOTPEmail(email, otp);
-
-    console.log("OTP GENERATED (DEV):", otp);
+    // 🔥 TRY EMAIL (PRODUCTION)
+    try {
+      await sendOTPEmail(email, otp);
+      console.log("✅ OTP EMAIL SENT TO:", email);
+    } catch (mailError) {
+      console.error("❌ EMAIL FAILED, OTP LOGGED:", mailError.message);
+      console.log("OTP GENERATED (DEV FALLBACK):", otp);
+    }
 
     return res.status(200).json({
       success: true,
-      message: "OTP sent successfully"
+      message: "OTP sent successfully",
     });
   } catch (error) {
     console.error("SEND OTP ERROR:", error);
     return res.status(500).json({
       success: false,
-      message: "Failed to send OTP"
+      message: "Failed to send OTP",
     });
   }
 };
@@ -99,14 +102,14 @@ export const verifyOTP = async (req, res) => {
       user: {
         id: user._id,
         email: user.email,
-        role: user.role
-      }
+        role: user.role,
+      },
     });
   } catch (error) {
     console.error("VERIFY OTP ERROR:", error);
     return res.status(500).json({
       success: false,
-      message: "OTP verification failed"
+      message: "OTP verification failed",
     });
   }
 };
