@@ -22,7 +22,17 @@ const app = express();
 /* =========================
    MIDDLEWARE
 ========================= */
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",
+      "https://your-vercel-app.vercel.app",
+      "https://www.bym.co.in"
+    ],
+    credentials: true,
+  })
+);
+
 app.use(express.json());
 
 /* =========================
