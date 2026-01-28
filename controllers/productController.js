@@ -217,7 +217,21 @@ export const getLowStockProducts = async (req, res) => {
  */
 export const getProductsWithStock = async (req, res) => {
   try {
-    const data = await Inventory.aggregate([
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const search = req.query.search?.trim() || "";
+    const skip = (page - 1) * limit;
+
+    const matchStage = search
+      ? {
+          $or: [
+            { "product.name": { $regex: search, $options: "i" } },
+            { "product.sku": { $regex: search, $options: "i" } },
+          ],
+        }
+      : {};
+
+    const basePipeline = [
       {
         $lookup: {
           from: "products",
@@ -227,6 +241,14 @@ export const getProductsWithStock = async (req, res) => {
         },
       },
       { $unwind: "$product" },
+      { $match: matchStage },
+    ];
+
+    const dataPipeline = [
+      ...basePipeline,
+      { $sort: { "product.createdAt": -1 } },
+      { $skip: skip },
+      { $limit: limit },
       {
         $project: {
           _id: "$product._id",
@@ -235,20 +257,34 @@ export const getProductsWithStock = async (req, res) => {
           category: "$product.category",
           unit: "$product.unit",
           variant: "$product.variant",
-
-          openingStock: "$product.openingStock",
-          price: "$product.price",
-          purchasePrice: "$product.purchasePrice",
-
           minStock: "$product.minStock",
           quantity: "$quantity",
+          avgPurchasePrice: "$avgPurchasePrice",
+          totalValue: "$totalValue",
         },
       },
+    ];
+
+    const countPipeline = [
+      ...basePipeline,
+      { $count: "total" },
+    ];
+
+    const [data, countResult] = await Promise.all([
+      Inventory.aggregate(dataPipeline),
+      Inventory.aggregate(countPipeline),
     ]);
 
-    res.json(data);
+    const total = countResult[0]?.total || 0;
+
+    res.json({
+      data,
+      page,
+      total,
+      pages: Math.ceil(total / limit),
+    });
   } catch (error) {
     console.error("PRODUCTS WITH STOCK ERROR:", error.message);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ message: "Failed to load dashboard products" });
   }
 };
