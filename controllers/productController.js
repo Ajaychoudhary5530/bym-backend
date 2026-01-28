@@ -82,6 +82,124 @@ export const getProducts = async (req, res) => {
 
 /**
  * =========================
+ * GET PRODUCT BY ID
+ * =========================
+ */
+export const getProductById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid product ID" });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    res.json(product);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * =========================
+ * UPDATE PRODUCT (ADMIN)
+ * =========================
+ */
+export const updateProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid product ID" });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    Object.assign(product, req.body);
+    await product.save();
+
+    res.json(product);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * =========================
+ * DELETE PRODUCT (ADMIN)
+ * =========================
+ */
+export const deleteProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid product ID" });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    await Inventory.deleteOne({ productId: product._id });
+    await product.deleteOne();
+
+    res.json({ message: "Product deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * =========================
+ * LOW STOCK PRODUCTS
+ * =========================
+ */
+export const getLowStockProducts = async (req, res) => {
+  try {
+    const data = await Inventory.aggregate([
+      {
+        $lookup: {
+          from: "products",
+          localField: "productId",
+          foreignField: "_id",
+          as: "product",
+        },
+      },
+      { $unwind: "$product" },
+      {
+        $match: {
+          $expr: { $lte: ["$quantity", "$product.minStock"] },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          productId: "$product._id",
+          name: "$product.name",
+          sku: "$product.sku",
+          quantity: 1,
+          minStock: "$product.minStock",
+        },
+      },
+    ]);
+
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * =========================
  * PRODUCTS WITH STOCK (DASHBOARD)
  * =========================
  */
@@ -113,7 +231,6 @@ export const getProductsWithStock = async (req, res) => {
       { $unwind: "$product" },
       { $match: matchStage },
 
-      // 🔹 STOCK LOG AGGREGATION
       {
         $lookup: {
           from: "stocklogs",
@@ -174,7 +291,7 @@ export const getProductsWithStock = async (req, res) => {
 
       {
         $addFields: {
-          inQty: { $ifNull: [{ $arrayElemAt: ["$logAgg.inQty", 0] }, 0] },
+          qtyIn: { $ifNull: [{ $arrayElemAt: ["$logAgg.inQty", 0] }, 0] },
           amazonOut: {
             $ifNull: [{ $arrayElemAt: ["$logAgg.amazonOut", 0] }, 0],
           },
@@ -198,9 +315,9 @@ export const getProductsWithStock = async (req, res) => {
           variant: "$product.variant",
 
           openingQty: "$openingQty",
-          qtyIn: "$inQty",
-          amazonOut: "$amazonOut",
-          othersOut: "$othersOut",
+          qtyIn: 1,
+          amazonOut: 1,
+          othersOut: 1,
           currentQty: "$quantity",
 
           minStock: "$product.minStock",
