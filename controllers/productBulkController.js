@@ -4,13 +4,8 @@ import Product from "../models/Product.js";
 import Inventory from "../models/Inventory.js";
 import StockLog from "../models/StockLog.js";
 
-/* =========================
-   HELPERS
-========================= */
 const norm = (v) =>
-  String(v || "")
-    .trim()
-    .toLowerCase();
+  String(v || "").trim().toLowerCase();
 
 const makeSku = (name, usedSkus) => {
   let sku;
@@ -29,9 +24,6 @@ const makeSku = (name, usedSkus) => {
   return sku;
 };
 
-/* =========================
-   BULK UPLOAD
-========================= */
 export const bulkUploadProducts = async (req, res) => {
   try {
     if (!req.file) {
@@ -46,9 +38,6 @@ export const bulkUploadProducts = async (req, res) => {
       .on("data", (row) => rows.push(row))
       .on("end", async () => {
         try {
-          /* =========================
-             PRELOAD EXISTING DATA
-          ========================= */
           const existingProducts = await Product.find(
             {},
             { uniqueKey: 1, sku: 1 }
@@ -63,15 +52,12 @@ export const bulkUploadProducts = async (req, res) => {
           });
 
           const productsToInsert = [];
-          const inventoriesToInsert = [];
+          const tempInventory = [];
           const stockLogsToInsert = [];
 
           let created = 0;
           let updated = 0;
 
-          /* =========================
-             PROCESS CSV ROWS
-          ========================= */
           rows.forEach((r, i) => {
             const rowNumber = i + 2;
 
@@ -82,11 +68,7 @@ export const bulkUploadProducts = async (req, res) => {
               r.openingQty === undefined ||
               r.avgPurchasePrice === undefined
             ) {
-              errors.push({
-                row: rowNumber,
-                error:
-                  "Missing required fields: name, category, unit, openingQty, avgPurchasePrice",
-              });
+              errors.push({ row: rowNumber, error: "Missing required fields" });
               return;
             }
 
@@ -98,16 +80,8 @@ export const bulkUploadProducts = async (req, res) => {
             const openingQty = Number(r.openingQty);
             const avgPurchasePrice = Number(r.avgPurchasePrice);
 
-            if (isNaN(openingQty) || openingQty < 0) {
-              errors.push({ row: rowNumber, error: "Invalid openingQty" });
-              return;
-            }
-
-            if (isNaN(avgPurchasePrice) || avgPurchasePrice < 0) {
-              errors.push({
-                row: rowNumber,
-                error: "Invalid avgPurchasePrice",
-              });
+            if (isNaN(openingQty) || isNaN(avgPurchasePrice)) {
+              errors.push({ row: rowNumber, error: "Invalid numbers" });
               return;
             }
 
@@ -115,12 +89,10 @@ export const bulkUploadProducts = async (req, res) => {
               category
             )}|${norm(unit)}`;
 
-            const existing = productMap.get(uniqueKey);
-
-            if (!existing) {
+            if (!productMap.has(uniqueKey)) {
               const sku = makeSku(name, usedSkus);
 
-              const product = {
+              productsToInsert.push({
                 name,
                 sku,
                 category,
@@ -128,58 +100,49 @@ export const bulkUploadProducts = async (req, res) => {
                 variant,
                 minStock: 0,
                 uniqueKey,
-              };
-
-              productsToInsert.push(product);
-              productMap.set(uniqueKey, product);
-              created++;
-
-              inventoriesToInsert.push({
-                tempKey: uniqueKey,
-                quantity: openingQty,
-                avgPurchasePrice: Number(avgPurchasePrice.toFixed(2)),
-                totalValue: Number(
-                  (openingQty * avgPurchasePrice).toFixed(2)
-                ),
               });
+
+              tempInventory.push({
+                uniqueKey,
+                openingQty,
+                avgPurchasePrice,
+              });
+
+              productMap.set(uniqueKey, true);
+              created++;
             } else {
               updated++;
             }
           });
 
-          /* =========================
-             INSERT PRODUCTS
-          ========================= */
           const insertedProducts = await Product.insertMany(
             productsToInsert,
             { ordered: false }
           );
 
-          const productIdMap = new Map();
-          insertedProducts.forEach((p) =>
-            productIdMap.set(p.uniqueKey, p._id)
-          );
+          const inventoryToInsert = [];
 
-          /* =========================
-             INVENTORY + STOCK LOGS
-          ========================= */
-          inventoriesToInsert.forEach((inv) => {
-            const productId = productIdMap.get(inv.tempKey);
-            if (!productId) return;
+          insertedProducts.forEach((p) => {
+            const inv = tempInventory.find(
+              (i) => i.uniqueKey === p.uniqueKey
+            );
+            if (!inv) return;
 
-            inventoriesToInsert.push({
-              productId,
-              quantity: inv.quantity,
-              avgPurchasePrice: inv.avgPurchasePrice,
-              totalValue: inv.totalValue,
+            inventoryToInsert.push({
+              productId: p._id,
+              quantity: inv.openingQty,
+              avgPurchasePrice: Number(inv.avgPurchasePrice.toFixed(2)),
+              totalValue: Number(
+                (inv.openingQty * inv.avgPurchasePrice).toFixed(2)
+              ),
             });
 
-            if (inv.quantity > 0) {
+            if (inv.openingQty > 0) {
               stockLogsToInsert.push({
-                productId,
+                productId: p._id,
                 userId: req.user._id,
                 type: "IN",
-                quantity: inv.quantity,
+                quantity: inv.openingQty,
                 purchasePrice: inv.avgPurchasePrice,
                 date: new Date(),
                 remarks: "Opening Stock (Bulk Upload)",
@@ -187,8 +150,8 @@ export const bulkUploadProducts = async (req, res) => {
             }
           });
 
-          if (inventoriesToInsert.length) {
-            await Inventory.insertMany(inventoriesToInsert);
+          if (inventoryToInsert.length) {
+            await Inventory.insertMany(inventoryToInsert);
           }
 
           if (stockLogsToInsert.length) {
@@ -197,7 +160,7 @@ export const bulkUploadProducts = async (req, res) => {
 
           fs.unlinkSync(req.file.path);
 
-          return res.json({
+          res.json({
             message: "Bulk upload completed",
             created,
             updated,
@@ -205,15 +168,12 @@ export const bulkUploadProducts = async (req, res) => {
             errors,
           });
         } catch (err) {
-          console.error("BULK UPLOAD ERROR:", err);
-          try {
-            fs.unlinkSync(req.file.path);
-          } catch (e) {}
-          return res.status(500).json({ message: err.message });
+          console.error(err);
+          fs.unlinkSync(req.file.path);
+          res.status(500).json({ message: err.message });
         }
       });
   } catch (error) {
-    console.error("BULK UPLOAD ERROR:", error);
-    return res.status(500).json({ message: error.message });
+    res.status(500).json({ message: error.message });
   }
 };
