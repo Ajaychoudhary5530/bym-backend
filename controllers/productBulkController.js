@@ -4,8 +4,7 @@ import Product from "../models/Product.js";
 import Inventory from "../models/Inventory.js";
 import StockLog from "../models/StockLog.js";
 
-const norm = (v) =>
-  String(v || "").trim().toLowerCase();
+const norm = (v) => String(v || "").trim().toLowerCase();
 
 const makeSku = (name, usedSkus) => {
   let sku;
@@ -15,9 +14,7 @@ const makeSku = (name, usedSkus) => {
       .toUpperCase()
       .replace(/[^A-Z0-9 ]/g, "")
       .replace(/\s+/g, "-");
-
-    const rand = Math.floor(1000 + Math.random() * 9000);
-    sku = `${base || "ITEM"}-${rand}`;
+    sku = `${base || "ITEM"}-${Math.floor(1000 + Math.random() * 9000)}`;
   } while (usedSkus.has(sku));
 
   usedSkus.add(sku);
@@ -25,155 +22,197 @@ const makeSku = (name, usedSkus) => {
 };
 
 export const bulkUploadProducts = async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ message: "CSV file required" });
-    }
+  if (!req.file) {
+    return res.status(400).json({ message: "CSV file required" });
+  }
 
-    const rows = [];
-    const errors = [];
+  const rows = [];
+  const errors = [];
 
-    fs.createReadStream(req.file.path)
-      .pipe(csv())
-      .on("data", (row) => rows.push(row))
-      .on("end", async () => {
-        try {
-          const existingProducts = await Product.find(
-            {},
-            { uniqueKey: 1, sku: 1 }
-          ).lean();
+  fs.createReadStream(req.file.path)
+    .pipe(csv())
+    .on("data", (row) => rows.push(row))
+    .on("end", async () => {
+      try {
+        /* =========================
+           LOAD EXISTING DATA
+        ========================= */
+        const products = await Product.find({}).lean();
+        const inventories = await Inventory.find({}).lean();
 
-          const productMap = new Map();
-          const usedSkus = new Set();
+        const productByKey = new Map();
+        const productById = new Map();
+        const inventoryByProductId = new Map();
+        const usedSkus = new Set();
 
-          existingProducts.forEach((p) => {
-            productMap.set(p.uniqueKey, p);
-            usedSkus.add(p.sku);
-          });
+        products.forEach((p) => {
+          productByKey.set(p.uniqueKey, p);
+          productById.set(p._id.toString(), p);
+          usedSkus.add(p.sku);
+        });
 
-          const productsToInsert = [];
-          const tempInventory = [];
-          const stockLogsToInsert = [];
+        inventories.forEach((i) => {
+          inventoryByProductId.set(i.productId.toString(), i);
+        });
 
-          let created = 0;
-          let updated = 0;
+        const newProducts = [];
+        const newInventories = [];
+        const inventoryUpdates = [];
+        const stockLogs = [];
 
-          rows.forEach((r, i) => {
-            const rowNumber = i + 2;
+        let created = 0;
+        let updated = 0;
 
-            if (
-              !r.name ||
-              !r.category ||
-              !r.unit ||
-              r.openingQty === undefined ||
-              r.avgPurchasePrice === undefined
-            ) {
-              errors.push({ row: rowNumber, error: "Missing required fields" });
-              return;
-            }
+        /* =========================
+           PROCESS CSV
+        ========================= */
+        rows.forEach((r, i) => {
+          const rowNo = i + 2;
 
-            const name = String(r.name).trim();
-            const category = String(r.category).trim();
-            const unit = String(r.unit).trim();
-            const variant = r.variant ? String(r.variant).trim() : "";
+          if (
+            !r.name ||
+            !r.category ||
+            !r.unit ||
+            r.openingQty === undefined ||
+            r.avgPurchasePrice === undefined
+          ) {
+            errors.push({ row: rowNo, error: "Missing required fields" });
+            return;
+          }
 
-            const openingQty = Number(r.openingQty);
-            const avgPurchasePrice = Number(r.avgPurchasePrice);
+          const name = r.name.trim();
+          const category = r.category.trim();
+          const unit = r.unit.trim();
+          const variant = r.variant ? r.variant.trim() : "";
 
-            if (isNaN(openingQty) || isNaN(avgPurchasePrice)) {
-              errors.push({ row: rowNumber, error: "Invalid numbers" });
-              return;
-            }
+          const openingQty = Number(r.openingQty);
+          const price = Number(r.avgPurchasePrice);
 
-            const uniqueKey = `${norm(name)}|${norm(variant)}|${norm(
-              category
-            )}|${norm(unit)}`;
+          if (isNaN(openingQty) || isNaN(price)) {
+            errors.push({ row: rowNo, error: "Invalid number values" });
+            return;
+          }
 
-            if (!productMap.has(uniqueKey)) {
-              const sku = makeSku(name, usedSkus);
+          const uniqueKey = `${norm(name)}|${norm(variant)}|${norm(
+            category
+          )}|${norm(unit)}`;
 
-              productsToInsert.push({
-                name,
-                sku,
-                category,
-                unit,
-                variant,
-                minStock: 0,
-                uniqueKey,
-              });
+          let product = productByKey.get(uniqueKey);
 
-              tempInventory.push({
-                uniqueKey,
-                openingQty,
-                avgPurchasePrice,
-              });
+          /* =========================
+             NEW PRODUCT
+          ========================= */
+          if (!product) {
+            const sku = makeSku(name, usedSkus);
 
-              productMap.set(uniqueKey, true);
-              created++;
-            } else {
-              updated++;
-            }
-          });
+            product = {
+              name,
+              sku,
+              category,
+              unit,
+              variant,
+              minStock: 0,
+              uniqueKey,
+            };
 
-          const insertedProducts = await Product.insertMany(
-            productsToInsert,
-            { ordered: false }
+            newProducts.push(product);
+            productByKey.set(uniqueKey, product);
+            created++;
+          }
+
+          /* =========================
+             INVENTORY
+          ========================= */
+          const productId =
+            product._id || "__NEW__" + uniqueKey;
+
+          const existingInv = inventoryByProductId.get(
+            productId.toString()
           );
 
-          const inventoryToInsert = [];
-
-          insertedProducts.forEach((p) => {
-            const inv = tempInventory.find(
-              (i) => i.uniqueKey === p.uniqueKey
-            );
-            if (!inv) return;
-
-            inventoryToInsert.push({
-              productId: p._id,
-              quantity: inv.openingQty,
-              avgPurchasePrice: Number(inv.avgPurchasePrice.toFixed(2)),
-              totalValue: Number(
-                (inv.openingQty * inv.avgPurchasePrice).toFixed(2)
-              ),
+          if (!existingInv) {
+            newInventories.push({
+              productId,
+              quantity: openingQty,
+              avgPurchasePrice: Number(price.toFixed(2)),
+              totalValue: Number((openingQty * price).toFixed(2)),
             });
+          } else {
+            const newQty = existingInv.quantity + openingQty;
+            const newTotal =
+              existingInv.totalValue + openingQty * price;
 
-            if (inv.openingQty > 0) {
-              stockLogsToInsert.push({
-                productId: p._id,
-                userId: req.user._id,
-                type: "IN",
-                quantity: inv.openingQty,
-                purchasePrice: inv.avgPurchasePrice,
-                date: new Date(),
-                remarks: "Opening Stock (Bulk Upload)",
-              });
-            }
-          });
-
-          if (inventoryToInsert.length) {
-            await Inventory.insertMany(inventoryToInsert);
+            inventoryUpdates.push({
+              updateOne: {
+                filter: { _id: existingInv._id },
+                update: {
+                  quantity: newQty,
+                  totalValue: Number(newTotal.toFixed(2)),
+                  avgPurchasePrice:
+                    newQty > 0 ? Number((newTotal / newQty).toFixed(2)) : 0,
+                },
+              },
+            });
           }
 
-          if (stockLogsToInsert.length) {
-            await StockLog.insertMany(stockLogsToInsert);
+          if (openingQty > 0) {
+            stockLogs.push({
+              productId,
+              userId: req.user._id,
+              type: "IN",
+              quantity: openingQty,
+              purchasePrice: price,
+              date: new Date(),
+              remarks: "Opening Stock (Bulk Upload)",
+            });
           }
 
-          fs.unlinkSync(req.file.path);
+          updated++;
+        });
 
-          res.json({
-            message: "Bulk upload completed",
-            created,
-            updated,
-            failed: errors.length,
-            errors,
-          });
-        } catch (err) {
-          console.error(err);
-          fs.unlinkSync(req.file.path);
-          res.status(500).json({ message: err.message });
+        /* =========================
+           WRITE TO DB
+        ========================= */
+        const insertedProducts = newProducts.length
+          ? await Product.insertMany(newProducts)
+          : [];
+
+        const idMap = new Map();
+        insertedProducts.forEach((p) =>
+          idMap.set("__NEW__" + p.uniqueKey, p._id)
+        );
+
+        newInventories.forEach((inv) => {
+          if (typeof inv.productId === "string" && inv.productId.startsWith("__NEW__")) {
+            inv.productId = idMap.get(inv.productId);
+          }
+        });
+
+        if (newInventories.length) {
+          await Inventory.insertMany(newInventories);
         }
-      });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
+
+        if (inventoryUpdates.length) {
+          await Inventory.bulkWrite(inventoryUpdates);
+        }
+
+        if (stockLogs.length) {
+          await StockLog.insertMany(stockLogs);
+        }
+
+        fs.unlinkSync(req.file.path);
+
+        res.json({
+          message: "Bulk upload completed",
+          created,
+          updated,
+          failed: errors.length,
+          errors,
+        });
+      } catch (err) {
+        console.error("CSV BULK ERROR:", err);
+        fs.unlinkSync(req.file.path);
+        res.status(500).json({ message: err.message });
+      }
+    });
 };
