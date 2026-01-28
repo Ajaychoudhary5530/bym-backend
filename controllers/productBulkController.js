@@ -4,6 +4,9 @@ import Product from "../models/Product.js";
 import Inventory from "../models/Inventory.js";
 import StockLog from "../models/StockLog.js";
 
+/* =========================
+   HELPERS
+========================= */
 const norm = (v) => String(v || "").trim().toLowerCase();
 
 const makeSku = (name, usedSkus) => {
@@ -21,6 +24,9 @@ const makeSku = (name, usedSkus) => {
   return sku;
 };
 
+/* =========================
+   BULK UPLOAD
+========================= */
 export const bulkUploadProducts = async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ message: "CSV file required" });
@@ -41,13 +47,11 @@ export const bulkUploadProducts = async (req, res) => {
         const inventories = await Inventory.find({}).lean();
 
         const productByKey = new Map();
-        const productById = new Map();
         const inventoryByProductId = new Map();
         const usedSkus = new Set();
 
         products.forEach((p) => {
           productByKey.set(p.uniqueKey, p);
-          productById.set(p._id.toString(), p);
           usedSkus.add(p.sku);
         });
 
@@ -57,11 +61,9 @@ export const bulkUploadProducts = async (req, res) => {
 
         const newProducts = [];
         const newInventories = [];
-        const inventoryUpdates = [];
         const stockLogs = [];
 
         let created = 0;
-        let updated = 0;
 
         /* =========================
            PROCESS CSV
@@ -87,9 +89,15 @@ export const bulkUploadProducts = async (req, res) => {
 
           const openingQty = Number(r.openingQty);
           const price = Number(r.avgPurchasePrice);
+          const minStock = Number(r.minStock || 0);
 
-          if (isNaN(openingQty) || isNaN(price)) {
-            errors.push({ row: rowNo, error: "Invalid number values" });
+          if (
+            isNaN(openingQty) ||
+            openingQty < 0 ||
+            isNaN(price) ||
+            price < 0
+          ) {
+            errors.push({ row: rowNo, error: "Invalid numeric values" });
             return;
           }
 
@@ -100,7 +108,7 @@ export const bulkUploadProducts = async (req, res) => {
           let product = productByKey.get(uniqueKey);
 
           /* =========================
-             NEW PRODUCT
+             CREATE PRODUCT (IF NEW)
           ========================= */
           if (!product) {
             const sku = makeSku(name, usedSkus);
@@ -111,7 +119,7 @@ export const bulkUploadProducts = async (req, res) => {
               category,
               unit,
               variant,
-              minStock: 0,
+              minStock,
               uniqueKey,
             };
 
@@ -120,54 +128,33 @@ export const bulkUploadProducts = async (req, res) => {
             created++;
           }
 
-          /* =========================
-             INVENTORY
-          ========================= */
           const productId =
             product._id || "__NEW__" + uniqueKey;
 
-          const existingInv = inventoryByProductId.get(
-            productId.toString()
-          );
-
-          if (!existingInv) {
+          /* =========================
+             CREATE INVENTORY (OPENING ONLY)
+          ========================= */
+          if (!inventoryByProductId.has(productId.toString())) {
             newInventories.push({
               productId,
+              openingQty,
               quantity: openingQty,
               avgPurchasePrice: Number(price.toFixed(2)),
               totalValue: Number((openingQty * price).toFixed(2)),
             });
-          } else {
-            const newQty = existingInv.quantity + openingQty;
-            const newTotal =
-              existingInv.totalValue + openingQty * price;
 
-            inventoryUpdates.push({
-              updateOne: {
-                filter: { _id: existingInv._id },
-                update: {
-                  quantity: newQty,
-                  totalValue: Number(newTotal.toFixed(2)),
-                  avgPurchasePrice:
-                    newQty > 0 ? Number((newTotal / newQty).toFixed(2)) : 0,
-                },
-              },
-            });
+            if (openingQty > 0) {
+              stockLogs.push({
+                productId,
+                userId: req.user._id,
+                type: "IN",
+                quantity: openingQty,
+                purchasePrice: price,
+                remarks: "Opening Stock (CSV Upload)",
+                date: new Date(),
+              });
+            }
           }
-
-          if (openingQty > 0) {
-            stockLogs.push({
-              productId,
-              userId: req.user._id,
-              type: "IN",
-              quantity: openingQty,
-              purchasePrice: price,
-              date: new Date(),
-              remarks: "Opening Stock (Bulk Upload)",
-            });
-          }
-
-          updated++;
         });
 
         /* =========================
@@ -183,7 +170,7 @@ export const bulkUploadProducts = async (req, res) => {
         );
 
         newInventories.forEach((inv) => {
-          if (typeof inv.productId === "string" && inv.productId.startsWith("__NEW__")) {
+          if (typeof inv.productId === "string") {
             inv.productId = idMap.get(inv.productId);
           }
         });
@@ -192,11 +179,12 @@ export const bulkUploadProducts = async (req, res) => {
           await Inventory.insertMany(newInventories);
         }
 
-        if (inventoryUpdates.length) {
-          await Inventory.bulkWrite(inventoryUpdates);
-        }
-
         if (stockLogs.length) {
+          stockLogs.forEach((log) => {
+            if (typeof log.productId === "string") {
+              log.productId = idMap.get(log.productId);
+            }
+          });
           await StockLog.insertMany(stockLogs);
         }
 
@@ -205,7 +193,6 @@ export const bulkUploadProducts = async (req, res) => {
         res.json({
           message: "Bulk upload completed",
           created,
-          updated,
           failed: errors.length,
           errors,
         });

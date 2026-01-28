@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 
 const inventorySchema = new mongoose.Schema(
   {
+    // 🔗 Reference to Product
     productId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Product",
@@ -9,28 +10,38 @@ const inventorySchema = new mongoose.Schema(
       unique: true,
     },
 
-    // Current available stock
+    // 🟦 OPENING STOCK
+    // Set ONLY once during fresh CSV upload
+    openingQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // 🟩 CURRENT STOCK (single source of truth)
     quantity: {
       type: Number,
       default: 0,
       min: 0,
     },
 
-    // ✅ Weighted Average Purchase Price
+    // 💰 Average purchase price
     avgPurchasePrice: {
       type: Number,
       default: 0,
       min: 0,
     },
 
-    // ✅ Total inventory value (quantity × avgPurchasePrice)
+    // 💵 Total stock value (quantity * avgPurchasePrice)
     totalValue: {
       type: Number,
       default: 0,
       min: 0,
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
 export default mongoose.model("Inventory", inventorySchema);

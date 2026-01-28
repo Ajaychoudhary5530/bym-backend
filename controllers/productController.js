@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Product from "../models/Product.js";
 import Inventory from "../models/Inventory.js";
+import StockLog from "../models/StockLog.js";
 
 /**
  * =========================
@@ -16,7 +17,6 @@ export const createProduct = async (req, res) => {
       unit,
       variant,
       openingStock,
-      price,
       purchasePrice,
       minStock,
     } = req.body;
@@ -25,23 +25,16 @@ export const createProduct = async (req, res) => {
       return res.status(400).json({ message: "Name and SKU are required" });
     }
 
-    // ✅ normalize helper
     const norm = (v) => String(v || "").trim().toLowerCase();
-
-    // ✅ uniqueKey auto-generate
     const uniqueKey = `${norm(name)}|${norm(variant)}|${norm(category)}|${norm(
       unit
     )}`;
 
-    // SKU uniqueness
-    const existingSku = await Product.findOne({ sku: sku.trim() });
-    if (existingSku) {
+    if (await Product.findOne({ sku: sku.trim() })) {
       return res.status(400).json({ message: "SKU already exists" });
     }
 
-    // UniqueKey uniqueness (prevents duplicates)
-    const existingKey = await Product.findOne({ uniqueKey });
-    if (existingKey) {
+    if (await Product.findOne({ uniqueKey })) {
       return res.status(400).json({
         message: "Product already exists (same name + variant + category + unit)",
       });
@@ -50,19 +43,20 @@ export const createProduct = async (req, res) => {
     const product = await Product.create({
       name: name.trim(),
       sku: sku.trim(),
-      category: category || "",
-      unit: unit || "Nos",
-      variant: variant || "",
+      category,
+      unit,
+      variant,
       minStock: Number(minStock || 0),
       uniqueKey,
     });
 
-    // Auto-create inventory (set opening stock as initial quantity)
     await Inventory.create({
       productId: product._id,
+      openingQty: Number(openingStock || 0),
       quantity: Number(openingStock || 0),
       avgPurchasePrice: Number(purchasePrice || 0),
-      totalValue: Number(openingStock || 0) * Number(purchasePrice || 0),
+      totalValue:
+        Number(openingStock || 0) * Number(purchasePrice || 0),
     });
 
     res.status(201).json(product);
@@ -71,7 +65,6 @@ export const createProduct = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 
 /**
  * =========================
@@ -83,136 +76,13 @@ export const getProducts = async (req, res) => {
     const products = await Product.find().sort({ createdAt: -1 });
     res.json(products);
   } catch (error) {
-    console.error("GET PRODUCTS ERROR:", error.message);
     res.status(500).json({ message: error.message });
   }
 };
 
 /**
  * =========================
- * GET PRODUCT BY ID
- * =========================
- */
-export const getProductById = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid product ID" });
-    }
-
-    const product = await Product.findById(id);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    res.json(product);
-  } catch (error) {
-    console.error("GET PRODUCT ERROR:", error.message);
-    res.status(500).json({ message: error.message });
-  }
-};
-
-/**
- * =========================
- * UPDATE PRODUCT (ADMIN)
- * =========================
- */
-export const updateProduct = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid product ID" });
-    }
-
-    const product = await Product.findById(id);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    Object.assign(product, req.body);
-    await product.save();
-
-    res.json(product);
-  } catch (error) {
-    console.error("UPDATE PRODUCT ERROR:", error.message);
-    res.status(500).json({ message: error.message });
-  }
-};
-
-/**
- * =========================
- * DELETE PRODUCT (ADMIN)
- * =========================
- */
-export const deleteProduct = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid product ID" });
-    }
-
-    const product = await Product.findById(id);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    await Inventory.deleteOne({ productId: product._id });
-    await product.deleteOne();
-
-    res.json({ message: "Product deleted successfully" });
-  } catch (error) {
-    console.error("DELETE PRODUCT ERROR:", error.message);
-    res.status(500).json({ message: error.message });
-  }
-};
-
-/**
- * =========================
- * LOW STOCK PRODUCTS (ADMIN)
- * =========================
- */
-export const getLowStockProducts = async (req, res) => {
-  try {
-    const lowStock = await Inventory.aggregate([
-      {
-        $lookup: {
-          from: "products",
-          localField: "productId",
-          foreignField: "_id",
-          as: "product",
-        },
-      },
-      { $unwind: "$product" },
-      {
-        $match: {
-          $expr: { $lte: ["$quantity", "$product.minStock"] },
-        },
-      },
-      {
-        $project: {
-          _id: 0,
-          productId: "$product._id",
-          name: "$product.name",
-          sku: "$product.sku",
-          quantity: 1,
-          minStock: "$product.minStock",
-        },
-      },
-    ]);
-
-    res.json(lowStock);
-  } catch (error) {
-    console.error("LOW STOCK ERROR:", error.message);
-    res.status(500).json({ message: error.message });
-  }
-};
-
-/**
- * =========================
- * PRODUCTS WITH STOCK
+ * PRODUCTS WITH STOCK (DASHBOARD)
  * =========================
  */
 export const getProductsWithStock = async (req, res) => {
@@ -231,7 +101,7 @@ export const getProductsWithStock = async (req, res) => {
         }
       : {};
 
-    const basePipeline = [
+    const pipeline = [
       {
         $lookup: {
           from: "products",
@@ -242,13 +112,82 @@ export const getProductsWithStock = async (req, res) => {
       },
       { $unwind: "$product" },
       { $match: matchStage },
-    ];
 
-    const dataPipeline = [
-      ...basePipeline,
+      // 🔹 STOCK LOG AGGREGATION
+      {
+        $lookup: {
+          from: "stocklogs",
+          let: { pid: "$productId" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$productId", "$$pid"] } } },
+            {
+              $group: {
+                _id: null,
+                inQty: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $eq: ["$type", "IN"] },
+                          { $ne: ["$remarks", "Opening Stock (CSV Upload)"] },
+                        ],
+                      },
+                      "$quantity",
+                      0,
+                    ],
+                  },
+                },
+                amazonOut: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $eq: ["$type", "OUT"] },
+                          { $eq: ["$source", "AMAZON"] },
+                        ],
+                      },
+                      "$quantity",
+                      0,
+                    ],
+                  },
+                },
+                othersOut: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $eq: ["$type", "OUT"] },
+                          { $eq: ["$source", "OTHERS"] },
+                        ],
+                      },
+                      "$quantity",
+                      0,
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+          as: "logAgg",
+        },
+      },
+
+      {
+        $addFields: {
+          inQty: { $ifNull: [{ $arrayElemAt: ["$logAgg.inQty", 0] }, 0] },
+          amazonOut: {
+            $ifNull: [{ $arrayElemAt: ["$logAgg.amazonOut", 0] }, 0],
+          },
+          othersOut: {
+            $ifNull: [{ $arrayElemAt: ["$logAgg.othersOut", 0] }, 0],
+          },
+        },
+      },
+
       { $sort: { "product.createdAt": -1 } },
       { $skip: skip },
       { $limit: limit },
+
       {
         $project: {
           _id: "$product._id",
@@ -257,21 +196,27 @@ export const getProductsWithStock = async (req, res) => {
           category: "$product.category",
           unit: "$product.unit",
           variant: "$product.variant",
+
+          openingQty: "$openingQty",
+          qtyIn: "$inQty",
+          amazonOut: "$amazonOut",
+          othersOut: "$othersOut",
+          currentQty: "$quantity",
+
           minStock: "$product.minStock",
-          quantity: "$quantity",
           avgPurchasePrice: "$avgPurchasePrice",
-          totalValue: "$totalValue",
+          stockValue: "$totalValue",
         },
       },
     ];
 
     const countPipeline = [
-      ...basePipeline,
+      ...pipeline.slice(0, 3),
       { $count: "total" },
     ];
 
     const [data, countResult] = await Promise.all([
-      Inventory.aggregate(dataPipeline),
+      Inventory.aggregate(pipeline),
       Inventory.aggregate(countPipeline),
     ]);
 
@@ -284,7 +229,7 @@ export const getProductsWithStock = async (req, res) => {
       pages: Math.ceil(total / limit),
     });
   } catch (error) {
-    console.error("PRODUCTS WITH STOCK ERROR:", error.message);
+    console.error("DASHBOARD ERROR:", error.message);
     res.status(500).json({ message: "Failed to load dashboard products" });
   }
 };
