@@ -68,6 +68,141 @@ export const createProduct = async (req, res) => {
 
 /**
  * =========================
+ * GET ALL PRODUCTS
+ * =========================
+ */
+export const getProducts = async (req, res) => {
+  try {
+    const products = await Product.find().sort({ createdAt: -1 });
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * =========================
+ * GET PRODUCT BY ID
+ * =========================
+ */
+export const getProductById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid product ID" });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    res.json(product);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * =========================
+ * UPDATE PRODUCT (ADMIN)
+ * =========================
+ */
+export const updateProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid product ID" });
+    }
+
+    const product = await Product.findByIdAndUpdate(
+      id,
+      req.body,
+      { new: true }
+    );
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    res.json(product);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * =========================
+ * DELETE PRODUCT (ADMIN)
+ * =========================
+ */
+export const deleteProduct = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid product ID" });
+    }
+
+    const product = await Product.findById(id);
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    await Inventory.deleteOne({ productId: product._id });
+    await StockLog.deleteMany({ productId: product._id });
+    await product.deleteOne();
+
+    res.json({ message: "Product deleted successfully" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * =========================
+ * LOW STOCK PRODUCTS
+ * =========================
+ */
+export const getLowStockProducts = async (req, res) => {
+  try {
+    const data = await Inventory.aggregate([
+      {
+        $lookup: {
+          from: "products",
+          localField: "productId",
+          foreignField: "_id",
+          as: "product",
+        },
+      },
+      { $unwind: "$product" },
+      {
+        $match: {
+          $expr: { $lte: ["$quantity", "$product.minStock"] },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          productId: "$product._id",
+          name: "$product.name",
+          sku: "$product.sku",
+          quantity: "$quantity",
+          minStock: "$product.minStock",
+        },
+      },
+    ]);
+
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/**
+ * =========================
  * PRODUCTS WITH STOCK (DASHBOARD)
  * =========================
  */
@@ -99,7 +234,6 @@ export const getProductsWithStock = async (req, res) => {
       { $unwind: "$product" },
       { $match: matchProduct },
 
-      // 🔹 STOCK LOGS
       {
         $lookup: {
           from: "stocklogs",
