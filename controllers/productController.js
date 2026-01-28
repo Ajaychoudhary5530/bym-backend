@@ -207,17 +207,7 @@ export const getProductsWithStock = async (req, res) => {
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
-    const search = req.query.search?.trim() || "";
     const skip = (page - 1) * limit;
-
-    const matchStage = search
-      ? {
-          $or: [
-            { "product.name": { $regex: search, $options: "i" } },
-            { "product.sku": { $regex: search, $options: "i" } },
-          ],
-        }
-      : {};
 
     const pipeline = [
       {
@@ -229,81 +219,64 @@ export const getProductsWithStock = async (req, res) => {
         },
       },
       { $unwind: "$product" },
-      { $match: matchStage },
 
+      // 🔑 AMAZON / OTHERS OUT
       {
         $lookup: {
           from: "stocklogs",
           let: { pid: "$productId" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$productId", "$$pid"] } } },
+            {
+              $match: {
+                $expr: { $eq: ["$productId", "$$pid"] },
+                type: "OUT",
+              },
+            },
             {
               $group: {
-                _id: null,
-                inQty: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $and: [
-                          { $eq: ["$type", "IN"] },
-                          { $ne: ["$remarks", "Opening Stock (CSV Upload)"] },
-                        ],
-                      },
-                      "$quantity",
-                      0,
-                    ],
-                  },
-                },
-                amazonOut: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $and: [
-                          { $eq: ["$type", "OUT"] },
-                          { $eq: ["$source", "AMAZON"] },
-                        ],
-                      },
-                      "$quantity",
-                      0,
-                    ],
-                  },
-                },
-                othersOut: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $and: [
-                          { $eq: ["$type", "OUT"] },
-                          { $eq: ["$source", "OTHERS"] },
-                        ],
-                      },
-                      "$quantity",
-                      0,
-                    ],
-                  },
-                },
+                _id: "$source",
+                qty: { $sum: "$quantity" },
               },
             },
           ],
-          as: "logAgg",
+          as: "outStats",
         },
       },
 
       {
         $addFields: {
-          qtyIn: { $ifNull: [{ $arrayElemAt: ["$logAgg.inQty", 0] }, 0] },
           amazonOut: {
-            $ifNull: [{ $arrayElemAt: ["$logAgg.amazonOut", 0] }, 0],
+            $sum: {
+              $map: {
+                input: {
+                  $filter: {
+                    input: "$outStats",
+                    as: "o",
+                    cond: { $eq: ["$$o._id", "AMAZON"] },
+                  },
+                },
+                as: "f",
+                in: "$$f.qty",
+              },
+            },
           },
           othersOut: {
-            $ifNull: [{ $arrayElemAt: ["$logAgg.othersOut", 0] }, 0],
+            $sum: {
+              $map: {
+                input: {
+                  $filter: {
+                    input: "$outStats",
+                    as: "o",
+                    cond: { $eq: ["$$o._id", "OTHERS"] },
+                  },
+                },
+                as: "f",
+                in: "$$f.qty",
+              },
+            },
           },
         },
       },
-
-      { $sort: { "product.createdAt": -1 } },
-      { $skip: skip },
-      { $limit: limit },
 
       {
         $project: {
@@ -315,29 +288,28 @@ export const getProductsWithStock = async (req, res) => {
           variant: "$product.variant",
 
           openingQty: "$openingQty",
-          qtyIn: 1,
-          amazonOut: 1,
-          othersOut: 1,
           currentQty: "$quantity",
+
+          qtyIn: {
+            $subtract: ["$quantity", "$openingQty"],
+          },
+
+          amazonOut: { $ifNull: ["$amazonOut", 0] },
+          othersOut: { $ifNull: ["$othersOut", 0] },
 
           minStock: "$product.minStock",
           avgPurchasePrice: "$avgPurchasePrice",
           stockValue: "$totalValue",
         },
       },
+
+      { $sort: { name: 1 } },
+      { $skip: skip },
+      { $limit: limit },
     ];
 
-    const countPipeline = [
-      ...pipeline.slice(0, 3),
-      { $count: "total" },
-    ];
-
-    const [data, countResult] = await Promise.all([
-      Inventory.aggregate(pipeline),
-      Inventory.aggregate(countPipeline),
-    ]);
-
-    const total = countResult[0]?.total || 0;
+    const data = await Inventory.aggregate(pipeline);
+    const total = await Inventory.countDocuments();
 
     res.json({
       data,
@@ -345,8 +317,8 @@ export const getProductsWithStock = async (req, res) => {
       total,
       pages: Math.ceil(total / limit),
     });
-  } catch (error) {
-    console.error("DASHBOARD ERROR:", error.message);
-    res.status(500).json({ message: "Failed to load dashboard products" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Dashboard load failed" });
   }
 };
