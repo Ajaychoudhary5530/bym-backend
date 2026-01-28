@@ -4,7 +4,19 @@ import Product from "../models/Product.js";
 import Inventory from "../models/Inventory.js";
 import StockLog from "../models/StockLog.js";
 
+// normalize helper
 const norm = (v) => String(v || "").trim().toLowerCase();
+
+// safe SKU generator
+const makeSku = (name) => {
+  const base = String(name || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]/g, "")
+    .replace(/\s+/g, "-");
+
+  return `${base}-${Math.floor(100000 + Math.random() * 900000)}`;
+};
 
 export const bulkUploadProducts = async (req, res) => {
   if (!req.file) {
@@ -42,8 +54,8 @@ export const bulkUploadProducts = async (req, res) => {
           const price = Number(r.avgPurchasePrice);
           const minStock = Number(r.minStock || 0);
 
-          if (isNaN(openingQty) || isNaN(price)) {
-            errors.push({ row: rowNo, error: "Invalid numbers" });
+          if (isNaN(openingQty) || openingQty < 0 || isNaN(price) || price < 0) {
+            errors.push({ row: rowNo, error: "Invalid numeric values" });
             continue;
           }
 
@@ -51,23 +63,35 @@ export const bulkUploadProducts = async (req, res) => {
             category
           )}|${norm(unit)}`;
 
+          /* =========================
+             PRODUCT
+          ========================= */
           let product = await Product.findOne({ uniqueKey });
 
           if (!product) {
             product = await Product.create({
               name,
-              sku: `${name.replace(/\s+/g, "-").toUpperCase()}-${Date.now()}`,
+              sku: makeSku(name),
               category,
               unit,
               variant,
               minStock,
               uniqueKey,
             });
+          } else {
+            // 🔒 Rule: CSV re-upload updates ONLY minStock
+            if (product.minStock !== minStock) {
+              product.minStock = minStock;
+              await product.save();
+            }
           }
 
+          /* =========================
+             INVENTORY
+          ========================= */
           let inventory = await Inventory.findOne({ productId: product._id });
 
-          // 🔑 FIRST TIME → SET OPENING
+          // ✅ FIRST TIME ONLY → set opening
           if (!inventory) {
             inventory = await Inventory.create({
               productId: product._id,
@@ -76,20 +100,20 @@ export const bulkUploadProducts = async (req, res) => {
               avgPurchasePrice: price,
               totalValue: openingQty * price,
             });
-          }
 
-          // 🔑 Opening Stock Log (ONLY ONCE)
-          if (openingQty > 0) {
-            await StockLog.create({
-              productId: product._id,
-              userId: req.user._id,
-              type: "IN",
-              stockType: "NEW",
-              quantity: openingQty,
-              purchasePrice: price,
-              date: new Date(),
-              remarks: "Opening Stock (CSV Upload)",
-            });
+            // ✅ Opening Stock log ONLY ONCE
+            if (openingQty > 0) {
+              await StockLog.create({
+                productId: product._id,
+                userId: req.user._id,
+                type: "IN",
+                stockType: "NEW",
+                quantity: openingQty,
+                purchasePrice: price,
+                date: new Date(),
+                remarks: "Opening Stock (CSV Upload)",
+              });
+            }
           }
         }
 
@@ -101,6 +125,7 @@ export const bulkUploadProducts = async (req, res) => {
           errors,
         });
       } catch (err) {
+        console.error("CSV BULK ERROR:", err);
         fs.unlinkSync(req.file.path);
         res.status(500).json({ message: err.message });
       }

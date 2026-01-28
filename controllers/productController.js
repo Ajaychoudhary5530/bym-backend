@@ -68,143 +68,6 @@ export const createProduct = async (req, res) => {
 
 /**
  * =========================
- * GET ALL PRODUCTS
- * =========================
- */
-export const getProducts = async (req, res) => {
-  try {
-    const products = await Product.find().sort({ createdAt: -1 });
-    res.json(products);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-/**
- * =========================
- * GET PRODUCT BY ID
- * =========================
- */
-export const getProductById = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid product ID" });
-    }
-
-    const product = await Product.findById(id);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    res.json(product);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-/**
- * =========================
- * UPDATE PRODUCT (ADMIN)
- * =========================
- */
-export const updateProduct = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid product ID" });
-    }
-
-    const product = await Product.findById(id);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    Object.assign(product, req.body);
-    await product.save();
-
-    res.json(product);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-/**
- * =========================
- * DELETE PRODUCT (ADMIN)
- * =========================
- */
-export const deleteProduct = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid product ID" });
-    }
-
-    const product = await Product.findById(id);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
-
-    await Inventory.deleteOne({ productId: product._id });
-    await product.deleteOne();
-
-    res.json({ message: "Product deleted successfully" });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-/**
- * =========================
- * LOW STOCK PRODUCTS
- * =========================
- */
-export const getLowStockProducts = async (req, res) => {
-  try {
-    const data = await Inventory.aggregate([
-      {
-        $lookup: {
-          from: "products",
-          localField: "productId",
-          foreignField: "_id",
-          as: "product",
-        },
-      },
-      { $unwind: "$product" },
-      {
-        $match: {
-          $expr: { $lte: ["$quantity", "$product.minStock"] },
-        },
-      },
-      {
-        $project: {
-          _id: 0,
-          productId: "$product._id",
-          name: "$product.name",
-          sku: "$product.sku",
-          quantity: 1,
-          minStock: "$product.minStock",
-        },
-      },
-    ]);
-
-    res.json(data);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-/**
- * =========================
- * PRODUCTS WITH STOCK (DASHBOARD)
- * =========================
- */
-/**
- * =========================
  * PRODUCTS WITH STOCK (DASHBOARD)
  * =========================
  */
@@ -215,7 +78,7 @@ export const getProductsWithStock = async (req, res) => {
     const search = req.query.search?.trim() || "";
     const skip = (page - 1) * limit;
 
-    const matchStage = search
+    const matchProduct = search
       ? {
           $or: [
             { "product.name": { $regex: search, $options: "i" } },
@@ -224,7 +87,7 @@ export const getProductsWithStock = async (req, res) => {
         }
       : {};
 
-    const basePipeline = [
+    const pipeline = [
       {
         $lookup: {
           from: "products",
@@ -234,14 +97,67 @@ export const getProductsWithStock = async (req, res) => {
         },
       },
       { $unwind: "$product" },
-      { $match: matchStage },
-    ];
+      { $match: matchProduct },
 
-    const dataPipeline = [
-      ...basePipeline,
+      // 🔹 STOCK LOGS
+      {
+        $lookup: {
+          from: "stocklogs",
+          let: { pid: "$productId" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$productId", "$$pid"] } } },
+            {
+              $group: {
+                _id: null,
+                qtyIn: {
+                  $sum: {
+                    $cond: [{ $eq: ["$type", "IN"] }, "$quantity", 0],
+                  },
+                },
+                amazonOut: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $eq: ["$type", "OUT"] },
+                          { $eq: ["$source", "AMAZON"] },
+                        ],
+                      },
+                      "$quantity",
+                      0,
+                    ],
+                  },
+                },
+                othersOut: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $eq: ["$type", "OUT"] },
+                          { $eq: ["$source", "OTHERS"] },
+                        ],
+                      },
+                      "$quantity",
+                      0,
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+          as: "logs",
+        },
+      },
+      {
+        $addFields: {
+          logs: { $ifNull: [{ $arrayElemAt: ["$logs", 0] }, {}] },
+        },
+      },
+
       { $sort: { "product.createdAt": -1 } },
       { $skip: skip },
       { $limit: limit },
+
       {
         $project: {
           _id: "$product._id",
@@ -251,12 +167,12 @@ export const getProductsWithStock = async (req, res) => {
           unit: "$product.unit",
           variant: "$product.variant",
 
-          // ✅ FIX: OPENING FALLBACK
-          openingQty: {
-            $ifNull: ["$openingQty", "$quantity"],
-          },
-
+          openingQty: "$openingQty",
           currentQty: "$quantity",
+
+          qtyIn: "$logs.qtyIn",
+          amazonOut: "$logs.amazonOut",
+          othersOut: "$logs.othersOut",
 
           minStock: "$product.minStock",
           avgPurchasePrice: "$avgPurchasePrice",
@@ -266,12 +182,21 @@ export const getProductsWithStock = async (req, res) => {
     ];
 
     const countPipeline = [
-      ...basePipeline,
+      {
+        $lookup: {
+          from: "products",
+          localField: "productId",
+          foreignField: "_id",
+          as: "product",
+        },
+      },
+      { $unwind: "$product" },
+      { $match: matchProduct },
       { $count: "total" },
     ];
 
     const [data, countResult] = await Promise.all([
-      Inventory.aggregate(dataPipeline),
+      Inventory.aggregate(pipeline),
       Inventory.aggregate(countPipeline),
     ]);
 
@@ -285,6 +210,6 @@ export const getProductsWithStock = async (req, res) => {
     });
   } catch (error) {
     console.error("DASHBOARD ERROR:", error.message);
-    res.status(500).json({ message: "Failed to load dashboard products" });
+    res.status(500).json({ message: "Failed to load dashboard" });
   }
 };
