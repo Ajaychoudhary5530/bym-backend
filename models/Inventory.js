@@ -9,27 +9,23 @@ const inventorySchema = new mongoose.Schema(
       unique: true,
     },
 
-    // 🔑 OPENING STOCK (fixed once at first CSV upload)
+    // 🔑 Opening stock (SET ONCE – never update after creation)
     openingQty: {
       type: Number,
       default: 0,
       min: 0,
+      immutable: true, // 🔒 very important
     },
 
-    // CURRENT STOCK
+    // ✅ SINGLE SOURCE OF TRUTH
     quantity: {
       type: Number,
       default: 0,
       min: 0,
     },
 
+    // ✅ Weighted average purchase price
     avgPurchasePrice: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    totalValue: {
       type: Number,
       default: 0,
       min: 0,

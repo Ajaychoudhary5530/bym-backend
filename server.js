@@ -12,6 +12,8 @@ import userRoutes from "./routes/userRoutes.js";
 import productBulkRoutes from "./routes/productBulkRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import resetRoutes from "./routes/resetRoutes.js";
+import inventoryRoutes from "./routes/inventoryRoutes.js";
+
 
 dotenv.config();
 connectDB();
@@ -53,6 +55,9 @@ app.use("/api/users", userRoutes);
 app.use("/api/products", productBulkRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/admin/reset", resetRoutes);
+console.log("🔥 INVENTORY ROUTES REGISTERING");
+app.use("/api/inventory", inventoryRoutes);
+
 
 /* =========================
    HEALTH CHECK

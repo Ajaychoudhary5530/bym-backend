@@ -1,16 +1,14 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
 import { adminOnly } from "../middleware/roleMiddleware.js";
-
 import {
-  getProductsWithStock,
-} from "../controllers/productController.js";
+  createInventory,
+  updateOpeningQty,
+} from "../controllers/inventoryController.js";
 
 const router = express.Router();
 
-/* =========================
-   DASHBOARD
-========================= */
-router.get("/with-stock", protect, getProductsWithStock);
+router.post("/create", protect, adminOnly, createInventory);
+router.put("/opening", protect, adminOnly, updateOpeningQty);
 
 export default router;
