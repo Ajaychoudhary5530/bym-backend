@@ -1,9 +1,8 @@
 import Product from "../models/Product.js";
 import Inventory from "../models/Inventory.js";
-import StockLog from "../models/StockLog.js";
 
 /* =========================
-   PRODUCTS WITH STOCK (DASHBOARD)
+   PRODUCTS WITH STOCK (FAST DASHBOARD)
 ========================= */
 export const getProductsWithStock = async (req, res) => {
   try {
@@ -27,7 +26,8 @@ export const getProductsWithStock = async (req, res) => {
     const products = await Product.find(filter)
       .skip((page - 1) * limit)
       .limit(limit)
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean(); // 🔥 faster
 
     const productIds = products.map((p) => p._id);
 
@@ -36,7 +36,7 @@ export const getProductsWithStock = async (req, res) => {
     ========================= */
     const inventories = await Inventory.find({
       productId: { $in: productIds },
-    });
+    }).lean(); // 🔥 faster
 
     const inventoryMap = {};
     inventories.forEach((inv) => {
@@ -44,47 +44,10 @@ export const getProductsWithStock = async (req, res) => {
     });
 
     /* =========================
-       STOCK LOGS (COUNTS ONLY)
-    ========================= */
-    const logs = await StockLog.find({
-      productId: { $in: productIds },
-    });
-
-    const logMap = {};
-    logs.forEach((log) => {
-      const pid = String(log.productId);
-
-      if (!logMap[pid]) {
-        logMap[pid] = {
-          qtyIn: 0,
-          amazonOut: 0,
-          othersOut: 0,
-        };
-      }
-
-      if (log.type === "IN") {
-        logMap[pid].qtyIn += log.quantity;
-      }
-
-      if (log.type === "OUT") {
-        if (log.source === "AMAZON") {
-          logMap[pid].amazonOut += log.quantity;
-        } else {
-          logMap[pid].othersOut += log.quantity;
-        }
-      }
-    });
-
-    /* =========================
        DASHBOARD RESPONSE
     ========================= */
     const data = products.map((p) => {
       const inv = inventoryMap[String(p._id)];
-      const logsAgg = logMap[String(p._id)] || {
-        qtyIn: 0,
-        amazonOut: 0,
-        othersOut: 0,
-      };
 
       const openingQty = inv?.openingQty || 0;
       const currentQty = inv?.quantity || 0;
@@ -101,13 +64,12 @@ export const getProductsWithStock = async (req, res) => {
         openingQty,
         currentQty,
 
-        qtyIn: logsAgg.qtyIn,
-        amazonOut: logsAgg.amazonOut,
-        othersOut: logsAgg.othersOut,
+        // counts removed from logs for speed
+        qtyIn: 0,
+        amazonOut: 0,
+        othersOut: 0,
 
         minStock: p.minStock || 0,
-
-        // 🔥 DO NOT CALCULATE FROM LOGS
         avgPurchasePrice,
         stockValue: Number((currentQty * avgPurchasePrice).toFixed(2)),
       };
