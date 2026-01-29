@@ -14,27 +14,50 @@ const stockLogSchema = new mongoose.Schema(
       required: true,
     },
 
-    // IN / OUT
+    /* =========================
+       LOG TYPE
+    ========================= */
     type: {
       type: String,
-      enum: ["IN", "OUT"],
+      enum: ["IN", "OUT", "ADJUST"],
       required: true,
     },
 
-    // NEW: IN type category (NEW stock or RETURN stock)
+    /* =========================
+       STOCK TYPE (IN ONLY)
+    ========================= */
     stockType: {
       type: String,
       enum: ["NEW", "RETURN"],
       default: "NEW",
     },
 
-    // NEW: Condition only for RETURN
+    /* =========================
+       RETURN CONDITION
+    ========================= */
     condition: {
       type: String,
       enum: ["GOOD", "DAMAGED", ""],
       default: "",
     },
 
+    /* =========================
+       ADJUSTMENT INFO
+    ========================= */
+    adjustmentType: {
+      type: String,
+      enum: ["INCREASE", "DECREASE", ""],
+      default: "",
+    },
+
+    adjustmentReason: {
+      type: String,
+      default: "",
+    },
+
+    /* =========================
+       QUANTITY
+    ========================= */
     quantity: {
       type: Number,
       required: true,
@@ -46,7 +69,9 @@ const stockLogSchema = new mongoose.Schema(
       required: true,
     },
 
-    // ✅ INVOICE DETAILS (Optional for NEW, not needed for RETURN)
+    /* =========================
+       INVOICE DETAILS
+    ========================= */
     invoiceNo: {
       type: String,
       default: "",
@@ -63,7 +88,9 @@ const stockLogSchema = new mongoose.Schema(
       default: "",
     },
 
-    // OUT SOURCE (Amazon / Others)
+    /* =========================
+       OUT SOURCE
+    ========================= */
     source: {
       type: String,
       enum: ["AMAZON", "OTHERS"],
@@ -72,7 +99,9 @@ const stockLogSchema = new mongoose.Schema(
       },
     },
 
-    // Common remarks (works for Return also)
+    /* =========================
+       COMMON REMARKS
+    ========================= */
     remarks: {
       type: String,
       default: "",

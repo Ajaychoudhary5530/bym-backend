@@ -135,6 +135,66 @@ export const stockOut = async (req, res) => {
 };
 
 /* =========================
+   INVENTORY ADJUSTMENT
+   (SUPER ADMIN)
+========================= */
+export const adjustStock = async (req, res) => {
+  try {
+    const { productId, quantity, adjustmentType, reason } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ message: "Invalid product" });
+    }
+
+    const qty = Number(quantity);
+    if (!qty || qty <= 0) {
+      return res.status(400).json({ message: "Invalid quantity" });
+    }
+
+    if (!["INCREASE", "DECREASE"].includes(adjustmentType)) {
+      return res.status(400).json({ message: "Invalid adjustment type" });
+    }
+
+    const inventory = await Inventory.findOne({ productId });
+    if (!inventory) {
+      return res.status(404).json({ message: "Inventory not found" });
+    }
+
+    if (
+      adjustmentType === "DECREASE" &&
+      inventory.quantity < qty
+    ) {
+      return res.status(400).json({
+        message: "Adjustment exceeds available stock",
+      });
+    }
+
+    if (adjustmentType === "INCREASE") {
+      inventory.quantity += qty;
+    } else {
+      inventory.quantity -= qty;
+    }
+
+    await inventory.save();
+
+    await StockLog.create({
+      productId,
+      userId: req.user._id,
+      type: "ADJUST",
+      adjustmentType,
+      adjustmentReason: reason || "",
+      quantity: qty,
+      date: new Date(),
+    });
+
+    res.json({ message: "Stock adjusted successfully" });
+  } catch (err) {
+    console.error("ADJUST ERROR:", err);
+    res.status(500).json({ message: "Adjustment failed" });
+  }
+};
+
+/* =========================
    STOCK HISTORY
 ========================= */
 export const getStockHistory = async (req, res) => {
@@ -157,7 +217,7 @@ export const getStockHistory = async (req, res) => {
       .sort({ date: -1 });
 
     res.json(logs);
-  } catch (err) {
+  } catch {
     res.status(500).json({ message: "History fetch failed" });
   }
 };
@@ -167,19 +227,7 @@ export const getStockHistory = async (req, res) => {
 ========================= */
 export const exportStockHistory = async (req, res) => {
   try {
-    const { from, to, productId } = req.query;
-    const filter = {};
-
-    if (from && to) {
-      filter.date = {
-        $gte: new Date(from),
-        $lte: new Date(to),
-      };
-    }
-
-    if (productId) filter.productId = productId;
-
-    const logs = await StockLog.find(filter)
+    const logs = await StockLog.find()
       .populate("productId", "name sku")
       .populate("userId", "email")
       .sort({ date: -1 });
@@ -216,7 +264,7 @@ export const exportStockHistory = async (req, res) => {
     );
 
     res.send(csv);
-  } catch (err) {
+  } catch {
     res.status(500).json({ message: "Export failed" });
   }
 };

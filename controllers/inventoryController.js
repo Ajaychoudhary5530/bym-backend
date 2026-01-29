@@ -7,7 +7,7 @@ import StockLog from "../models/StockLog.js";
 ========================= */
 export const createInventory = async (req, res) => {
   try {
-    const { productId, openingQty } = req.body;
+    const { productId, openingQty, avgPurchasePrice } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(productId)) {
       return res.status(400).json({ message: "Invalid productId" });
@@ -20,6 +20,13 @@ export const createInventory = async (req, res) => {
         .json({ message: "Opening quantity cannot be negative" });
     }
 
+    const price = Number(avgPurchasePrice || 0);
+    if (price < 0) {
+      return res
+        .status(400)
+        .json({ message: "Average price cannot be negative" });
+    }
+
     const exists = await Inventory.findOne({ productId });
     if (exists) {
       return res.status(400).json({
@@ -27,12 +34,14 @@ export const createInventory = async (req, res) => {
       });
     }
 
+    const totalValue = qty * price;
+
     const inventory = await Inventory.create({
       productId,
       openingQty: qty,
       quantity: qty,
-      avgPurchasePrice: 0,
-      totalValue: 0,
+      avgPurchasePrice: price,
+      totalValue,
     });
 
     res.status(201).json({
@@ -44,6 +53,59 @@ export const createInventory = async (req, res) => {
     res.status(500).json({ message: "Failed to create inventory" });
   }
 };
+
+/* =========================
+   UPDATE OPENING INVENTORY (SUPER ADMIN)
+========================= */
+export const updateOpeningInventory = async (req, res) => {
+  try {
+    const { productId, openingQty, openingPrice } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ message: "Invalid productId" });
+    }
+
+    const inventory = await Inventory.findOne({ productId });
+    if (!inventory) {
+      return res.status(404).json({ message: "Inventory not found" });
+    }
+
+    const qty = Number(openingQty);
+    const price = Number(openingPrice);
+
+    if (qty < 0 || price < 0) {
+      return res.status(400).json({
+        message: "Opening quantity or price cannot be negative",
+      });
+    }
+
+    /*
+      Fix logic:
+      - Opening stock price becomes base price
+      - Current quantity stays same
+      - Avg price recalculated
+    */
+
+    const currentQty = inventory.quantity;
+
+    const totalValue = currentQty * price;
+
+    inventory.openingQty = qty;
+    inventory.avgPurchasePrice = price;
+    inventory.totalValue = totalValue;
+
+    await inventory.save();
+
+    res.json({
+      message: "Opening inventory updated",
+      inventory,
+    });
+  } catch (err) {
+    console.error("UPDATE OPENING ERROR:", err);
+    res.status(500).json({ message: "Failed to update opening inventory" });
+  }
+};
+
 
 /* =========================
    RESET INVENTORY (DEV ONLY)
@@ -61,14 +123,12 @@ export const resetInventoryForTest = async (req, res) => {
       return res.status(404).json({ message: "Inventory not found" });
     }
 
-    // Reset inventory safely
     inventory.quantity = inventory.openingQty;
-    inventory.avgPurchasePrice = 0;
-    inventory.totalValue = 0;
+    inventory.totalValue =
+      inventory.openingQty * inventory.avgPurchasePrice;
 
     await inventory.save();
 
-    // Remove stock logs
     await StockLog.deleteMany({ productId });
 
     res.json({ message: "Inventory reset successful" });

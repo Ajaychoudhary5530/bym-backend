@@ -4,17 +4,23 @@ import {
   stockOut,
   getStockHistory,
   exportStockHistory,
+  adjustStock,
 } from "../controllers/stockController.js";
 
 import { protect } from "../middleware/authMiddleware.js";
-import { adminOnly } from "../middleware/roleMiddleware.js";
+import { adminOnly, superAdminOnly } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
 
 /* =========================
-   STOCK IN (ADMIN ONLY)
+   STOCK IN (ADMIN + SUPERADMIN)
 ========================= */
 router.post("/in", protect, adminOnly, stockIn);
+
+/* =========================
+   STOCK ADJUST (SUPERADMIN)
+========================= */
+router.post("/adjust", protect, superAdminOnly, adjustStock);
 
 /* =========================
    STOCK OUT
@@ -32,4 +38,3 @@ router.get("/history", protect, getStockHistory);
 router.get("/export", protect, exportStockHistory);
 
 export default router;
-  
