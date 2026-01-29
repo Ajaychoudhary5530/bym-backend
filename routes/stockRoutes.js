@@ -3,6 +3,7 @@ import {
   stockIn,
   stockOut,
   getStockHistory,
+  exportStockHistory,
 } from "../controllers/stockController.js";
 
 import { protect } from "../middleware/authMiddleware.js";
@@ -25,4 +26,10 @@ router.post("/out", protect, stockOut);
 ========================= */
 router.get("/history", protect, getStockHistory);
 
+/* =========================
+   EXPORT HISTORY
+========================= */
+router.get("/export", protect, exportStockHistory);
+
 export default router;
+  

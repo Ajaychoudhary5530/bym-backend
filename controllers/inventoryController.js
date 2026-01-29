@@ -1,8 +1,9 @@
 import mongoose from "mongoose";
 import Inventory from "../models/Inventory.js";
+import StockLog from "../models/StockLog.js";
 
 /* =========================
-   CREATE INVENTORY (ONE TIME)
+   CREATE INVENTORY
 ========================= */
 export const createInventory = async (req, res) => {
   try {
@@ -45,21 +46,14 @@ export const createInventory = async (req, res) => {
 };
 
 /* =========================
-   UPDATE OPENING QTY (ADMIN SAFE)
+   RESET INVENTORY (DEV ONLY)
 ========================= */
-export const updateOpeningQty = async (req, res) => {
+export const resetInventoryForTest = async (req, res) => {
   try {
-    const { productId, openingQty } = req.body;
+    const { productId } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(productId)) {
       return res.status(400).json({ message: "Invalid productId" });
-    }
-
-    const qty = Number(openingQty);
-    if (isNaN(qty) || qty < 0) {
-      return res
-        .status(400)
-        .json({ message: "Opening quantity must be >= 0" });
     }
 
     const inventory = await Inventory.findOne({ productId });
@@ -67,27 +61,19 @@ export const updateOpeningQty = async (req, res) => {
       return res.status(404).json({ message: "Inventory not found" });
     }
 
-    // ❗ Only allow if no stock movement yet
-    if (inventory.quantity !== inventory.openingQty) {
-      return res.status(400).json({
-        message: "Cannot update opening quantity after stock movement",
-      });
-    }
-
-    // 🔥 FORCE SYNC (this is the fix)
-    inventory.openingQty = qty;
-    inventory.quantity = qty;
+    // Reset inventory safely
+    inventory.quantity = inventory.openingQty;
     inventory.avgPurchasePrice = 0;
     inventory.totalValue = 0;
 
     await inventory.save();
 
-    res.json({
-      message: "Opening quantity updated successfully",
-      inventory,
-    });
+    // Remove stock logs
+    await StockLog.deleteMany({ productId });
+
+    res.json({ message: "Inventory reset successful" });
   } catch (err) {
-    console.error("UPDATE OPENING QTY ERROR:", err);
-    res.status(500).json({ message: "Failed to update opening quantity" });
+    console.error("RESET INVENTORY ERROR:", err);
+    res.status(500).json({ message: "Reset failed" });
   }
 };

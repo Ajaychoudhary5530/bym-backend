@@ -11,6 +11,9 @@ export const getProductsWithStock = async (req, res) => {
     const limit = Number(req.query.limit) || 20;
     const search = req.query.search || "";
 
+    /* =========================
+       SEARCH FILTER
+    ========================= */
     const filter = {};
     if (search) {
       filter.$or = [
@@ -28,7 +31,9 @@ export const getProductsWithStock = async (req, res) => {
 
     const productIds = products.map((p) => p._id);
 
-    // Fetch inventories
+    /* =========================
+       INVENTORY (SOURCE OF TRUTH)
+    ========================= */
     const inventories = await Inventory.find({
       productId: { $in: productIds },
     });
@@ -38,15 +43,17 @@ export const getProductsWithStock = async (req, res) => {
       inventoryMap[String(inv.productId)] = inv;
     });
 
-    // Fetch stock logs
+    /* =========================
+       STOCK LOGS (COUNTS ONLY)
+    ========================= */
     const logs = await StockLog.find({
       productId: { $in: productIds },
     });
 
-    // Aggregate logs
     const logMap = {};
     logs.forEach((log) => {
       const pid = String(log.productId);
+
       if (!logMap[pid]) {
         logMap[pid] = {
           qtyIn: 0,
@@ -68,7 +75,9 @@ export const getProductsWithStock = async (req, res) => {
       }
     });
 
-    // Build dashboard response
+    /* =========================
+       DASHBOARD RESPONSE
+    ========================= */
     const data = products.map((p) => {
       const inv = inventoryMap[String(p._id)];
       const logsAgg = logMap[String(p._id)] || {
@@ -97,6 +106,8 @@ export const getProductsWithStock = async (req, res) => {
         othersOut: logsAgg.othersOut,
 
         minStock: p.minStock || 0,
+
+        // 🔥 DO NOT CALCULATE FROM LOGS
         avgPurchasePrice,
         stockValue: Number((currentQty * avgPurchasePrice).toFixed(2)),
       };

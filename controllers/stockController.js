@@ -3,14 +3,14 @@ import Inventory from "../models/Inventory.js";
 import StockLog from "../models/StockLog.js";
 
 /* =========================
-   STOCK IN (NEW + RETURN)
+   STOCK IN
 ========================= */
 export const stockIn = async (req, res) => {
   try {
     const {
       productId,
       quantity,
-      stockType, // NEW | RETURN
+      stockType,
       purchasePrice,
       invoiceNo,
       invoicePdfUrl,
@@ -34,9 +34,9 @@ export const stockIn = async (req, res) => {
         return res.status(400).json({ message: "Invoice number required" });
       }
       if (isNaN(Number(purchasePrice)) || Number(purchasePrice) < 0) {
-        return res
-          .status(400)
-          .json({ message: "Valid purchase price required" });
+        return res.status(400).json({
+          message: "Valid purchase price required",
+        });
       }
     }
 
@@ -45,17 +45,14 @@ export const stockIn = async (req, res) => {
       return res.status(404).json({ message: "Inventory not found" });
     }
 
-    // 🔑 SINGLE SOURCE OF TRUTH
     const oldQty = inventory.quantity;
     const oldAvg = inventory.avgPurchasePrice;
 
     let newAvg = oldAvg;
 
-    // Weighted average ONLY for NEW stock
     if (finalStockType === "NEW") {
       const price = Number(purchasePrice);
-      const totalValue =
-        oldQty * oldAvg + inQty * price;
+      const totalValue = oldQty * oldAvg + inQty * price;
 
       newAvg =
         oldQty + inQty > 0
@@ -65,6 +62,7 @@ export const stockIn = async (req, res) => {
 
     inventory.quantity = oldQty + inQty;
     inventory.avgPurchasePrice = newAvg;
+
     await inventory.save();
 
     await StockLog.create({
@@ -141,7 +139,19 @@ export const stockOut = async (req, res) => {
 ========================= */
 export const getStockHistory = async (req, res) => {
   try {
-    const logs = await StockLog.find()
+    const { from, to, productId } = req.query;
+    const filter = {};
+
+    if (from && to) {
+      filter.date = {
+        $gte: new Date(from),
+        $lte: new Date(to),
+      };
+    }
+
+    if (productId) filter.productId = productId;
+
+    const logs = await StockLog.find(filter)
       .populate("productId", "name sku")
       .populate("userId", "email")
       .sort({ date: -1 });
@@ -149,5 +159,64 @@ export const getStockHistory = async (req, res) => {
     res.json(logs);
   } catch (err) {
     res.status(500).json({ message: "History fetch failed" });
+  }
+};
+
+/* =========================
+   EXPORT HISTORY CSV
+========================= */
+export const exportStockHistory = async (req, res) => {
+  try {
+    const { from, to, productId } = req.query;
+    const filter = {};
+
+    if (from && to) {
+      filter.date = {
+        $gte: new Date(from),
+        $lte: new Date(to),
+      };
+    }
+
+    if (productId) filter.productId = productId;
+
+    const logs = await StockLog.find(filter)
+      .populate("productId", "name sku")
+      .populate("userId", "email")
+      .sort({ date: -1 });
+
+    const safe = (val) => {
+      const s = val === null || val === undefined ? "" : String(val);
+      return `"${s.replace(/\r?\n|\r/g, " ").replace(/"/g, '""')}"`;
+    };
+
+    let csv =
+      "Product,SKU,Type,StockType,Condition,Quantity,Source,PurchasePrice,InvoiceNo,Remarks,Date,User\n";
+
+    logs.forEach((l) => {
+      csv += [
+        safe(l.productId?.name),
+        safe(l.productId?.sku),
+        safe(l.type),
+        safe(l.stockType),
+        safe(l.condition),
+        safe(l.quantity),
+        safe(l.source),
+        safe(l.purchasePrice),
+        safe(l.invoiceNo),
+        safe(l.remarks),
+        safe(l.date?.toISOString().split("T")[0]),
+        safe(l.userId?.email),
+      ].join(",") + "\n";
+    });
+
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=stock-history.csv"
+    );
+
+    res.send(csv);
+  } catch (err) {
+    res.status(500).json({ message: "Export failed" });
   }
 };
