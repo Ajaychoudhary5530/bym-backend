@@ -14,17 +14,12 @@ export const createInventory = async (req, res) => {
     }
 
     const qty = Number(openingQty || 0);
-    if (qty < 0) {
-      return res
-        .status(400)
-        .json({ message: "Opening quantity cannot be negative" });
-    }
-
     const price = Number(avgPurchasePrice || 0);
-    if (price < 0) {
-      return res
-        .status(400)
-        .json({ message: "Average price cannot be negative" });
+
+    if (qty < 0 || price < 0) {
+      return res.status(400).json({
+        message: "Opening quantity or price cannot be negative",
+      });
     }
 
     const exists = await Inventory.findOne({ productId });
@@ -34,14 +29,11 @@ export const createInventory = async (req, res) => {
       });
     }
 
-    const totalValue = qty * price;
-
     const inventory = await Inventory.create({
       productId,
       openingQty: qty,
       quantity: qty,
       avgPurchasePrice: price,
-      totalValue,
     });
 
     res.status(201).json({
@@ -55,11 +47,12 @@ export const createInventory = async (req, res) => {
 };
 
 /* =========================
-   UPDATE OPENING INVENTORY (SUPER ADMIN)
+   UPDATE OPENING INVENTORY
+   (SUPER ADMIN CORRECTION)
 ========================= */
 export const updateOpeningInventory = async (req, res) => {
   try {
-    const { productId, openingQty, openingPrice } = req.body;
+    const { productId, openingQty, openingPrice, reason } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(productId)) {
       return res.status(400).json({ message: "Invalid productId" });
@@ -79,25 +72,29 @@ export const updateOpeningInventory = async (req, res) => {
       });
     }
 
-    /*
-      Fix logic:
-      - Opening stock price becomes base price
-      - Current quantity stays same
-      - Avg price recalculated
-    */
-
-    const currentQty = inventory.quantity;
-
-    const totalValue = currentQty * price;
+    const oldQty = inventory.openingQty;
+    const oldPrice = inventory.avgPurchasePrice;
 
     inventory.openingQty = qty;
     inventory.avgPurchasePrice = price;
-    inventory.totalValue = totalValue;
 
     await inventory.save();
 
+    /* Audit log */
+    await StockLog.create({
+      productId,
+      userId: req.user._id,
+      type: "ADJUST",
+      adjustmentType: "INCREASE",
+      adjustmentReason:
+        reason ||
+        `Opening correction: Qty ${oldQty}→${qty}, Price ${oldPrice}→${price}`,
+      quantity: Math.abs(qty - oldQty) || 1,
+      date: new Date(),
+    });
+
     res.json({
-      message: "Opening inventory updated",
+      message: "Opening inventory corrected",
       inventory,
     });
   } catch (err) {
@@ -106,9 +103,8 @@ export const updateOpeningInventory = async (req, res) => {
   }
 };
 
-
 /* =========================
-   RESET INVENTORY (DEV ONLY)
+   RESET INVENTORY (DEV)
 ========================= */
 export const resetInventoryForTest = async (req, res) => {
   try {
@@ -124,8 +120,6 @@ export const resetInventoryForTest = async (req, res) => {
     }
 
     inventory.quantity = inventory.openingQty;
-    inventory.totalValue =
-      inventory.openingQty * inventory.avgPurchasePrice;
 
     await inventory.save();
 

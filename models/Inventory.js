@@ -9,22 +9,21 @@ const inventorySchema = new mongoose.Schema(
       unique: true,
     },
 
-    // 🔑 Opening stock (SET ONCE – never update after creation)
+    // Opening stock (can be corrected by Super Admin)
     openingQty: {
       type: Number,
       default: 0,
       min: 0,
-      immutable: true, // 🔒 very important
     },
 
-    // ✅ SINGLE SOURCE OF TRUTH
+    // Current stock quantity (single source of truth)
     quantity: {
       type: Number,
       default: 0,
       min: 0,
     },
 
-    // ✅ Weighted average purchase price
+    // Weighted average purchase price
     avgPurchasePrice: {
       type: Number,
       default: 0,
