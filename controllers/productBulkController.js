@@ -31,6 +31,7 @@ export const bulkUploadProducts = async (req, res) => {
               unit: r.unit || "Nos",
               minStock: Number(r.minStock) || 0,
               openingQty: Number(r.openingQty) || 0,
+              openingPrice: Number(r.openingPrice) || 0,
               uniqueKey: r.sku?.trim()?.toLowerCase(),
             }))
             .filter((r) => r.name && r.sku);
@@ -62,23 +63,20 @@ export const bulkUploadProducts = async (req, res) => {
           let createdCount = 0;
 
           if (newProducts.length) {
-            try {
-              const created = await Product.insertMany(
-                newProducts.map((p) => ({
-                  name: p.name,
-                  sku: p.sku,
-                  category: p.category,
-                  variant: p.variant,
-                  unit: p.unit,
-                  minStock: p.minStock,
-                  uniqueKey: p.uniqueKey,
-                })),
-                { ordered: false }
-              );
-              createdCount = created.length;
-            } catch (e) {
-              console.warn("Partial insert occurred");
-            }
+            const created = await Product.insertMany(
+              newProducts.map((p) => ({
+                name: p.name,
+                sku: p.sku,
+                category: p.category,
+                variant: p.variant,
+                unit: p.unit,
+                minStock: p.minStock,
+                uniqueKey: p.uniqueKey,
+              })),
+              { ordered: false }
+            );
+
+            createdCount = created.length;
           }
 
           /* ---------- Ensure inventory ---------- */
@@ -106,13 +104,13 @@ export const bulkUploadProducts = async (req, res) => {
               );
 
               const qty = Number(source?.openingQty) || 0;
+              const price = Number(source?.openingPrice) || 0;
 
               return {
                 productId: p._id,
                 openingQty: qty,
                 quantity: qty,
-                avgPurchasePrice: 0,
-                totalValue: 0,
+                avgPurchasePrice: price,
               };
             });
 
