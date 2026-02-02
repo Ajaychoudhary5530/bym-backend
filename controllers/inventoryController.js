@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Inventory from "../models/Inventory.js";
 import StockLog from "../models/StockLog.js";
+import Product from "../models/Product.js";
 
 /* =========================
    GET ALL INVENTORY (DASHBOARD)
@@ -93,7 +94,7 @@ export const updateOpeningInventory = async (req, res) => {
 
     inventory.openingQty = qty;
     inventory.avgPurchasePrice = price;
-    inventory.quantity = qty; // 🔥 keep quantity in sync
+    inventory.quantity = qty; // keep quantity in sync
 
     await inventory.save();
 
@@ -102,11 +103,11 @@ export const updateOpeningInventory = async (req, res) => {
       userId: req.user._id,
       type: "ADJUST",
       adjustmentType: qty >= oldQty ? "INCREASE" : "DECREASE",
-      adjustmentReason:
-        reason ||
-        `Opening correction: Qty ${oldQty}→${qty}, Price ${oldPrice}→${price}`,
       quantity: Math.abs(qty - oldQty) || 1,
       date: new Date(),
+      adjustmentReason:
+        reason ||
+        `Opening correction: Qty ${oldQty} → ${qty}, Price ${oldPrice} → ${price}`,
     });
 
     res.json({
@@ -116,6 +117,67 @@ export const updateOpeningInventory = async (req, res) => {
   } catch (err) {
     console.error("UPDATE OPENING ERROR:", err);
     res.status(500).json({ message: "Failed to update opening inventory" });
+  }
+};
+
+/* =========================
+   ADJUST MINIMUM STOCK (ADJ)
+========================= */
+export const adjustMinStock = async (req, res) => {
+  try {
+    const { productId, minStock, reason } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ message: "Invalid productId" });
+    }
+
+    const newMinStock = Number(minStock);
+
+    if (isNaN(newMinStock) || newMinStock < 0) {
+      return res.status(400).json({
+        message: "Minimum stock must be a non-negative number",
+      });
+    }
+
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    const oldMinStock = product.minStock;
+
+    if (oldMinStock === newMinStock) {
+      return res.json({
+        message: "Minimum stock unchanged",
+        minStock: oldMinStock,
+      });
+    }
+
+    product.minStock = newMinStock;
+    await product.save();
+
+    const diff = newMinStock - oldMinStock;
+
+    await StockLog.create({
+      productId: product._id,
+      userId: req.user._id,
+      type: "ADJUST",
+      adjustmentType: diff > 0 ? "INCREASE" : "DECREASE",
+      quantity: Math.abs(diff) || 1, // schema requires min 1
+      date: new Date(),
+      adjustmentReason: reason || "Minimum stock adjusted",
+      remarks: `MinStock changed: ${oldMinStock} → ${newMinStock}`,
+    });
+
+    res.json({
+      message: "Minimum stock updated successfully",
+      productId: product._id,
+      oldMinStock,
+      newMinStock,
+    });
+  } catch (err) {
+    console.error("ADJUST MIN STOCK ERROR:", err);
+    res.status(500).json({ message: "Failed to update minimum stock" });
   }
 };
 
@@ -146,3 +208,57 @@ export const resetInventoryForTest = async (req, res) => {
     res.status(500).json({ message: "Reset failed" });
   }
 };
+
+/* =========================
+   UPDATE MINIMUM STOCK (ADJUST)
+========================= */
+export const updateMinStock = async (req, res) => {
+  try {
+    const { productId, minStock, reason } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ message: "Invalid productId" });
+    }
+
+    if (minStock === undefined || Number(minStock) < 0) {
+      return res.status(400).json({ message: "Invalid minimum stock" });
+    }
+
+    const inventory = await Inventory.findOne({ productId }).populate(
+      "productId"
+    );
+
+    if (!inventory) {
+      return res.status(404).json({ message: "Inventory not found" });
+    }
+
+    const oldMinStock = inventory.productId.minStock || 0;
+
+    inventory.productId.minStock = Number(minStock);
+    await inventory.productId.save();
+
+    await StockLog.create({
+      productId,
+      userId: req.user._id,
+      type: "ADJUST",
+      adjustmentType:
+        minStock >= oldMinStock ? "INCREASE" : "DECREASE",
+      adjustmentReason:
+        reason ||
+        `Min stock changed ${oldMinStock} → ${minStock}`,
+      quantity: Math.abs(minStock - oldMinStock) || 1,
+      date: new Date(),
+    });
+
+    res.json({
+      message: "Minimum stock updated successfully",
+      productId,
+      oldMinStock,
+      newMinStock: Number(minStock),
+    });
+  } catch (err) {
+    console.error("MIN STOCK UPDATE ERROR:", err);
+    res.status(500).json({ message: "Min stock update failed" });
+  }
+};
+

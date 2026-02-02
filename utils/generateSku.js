@@ -1,33 +1,29 @@
-import Product from "../models/Product.js";
+import Counter from "../models/Counter.js";
 
-const normalize = (v, len = 4) =>
-  String(v || "")
+const pad = (num, size = 4) => {
+  let s = String(num);
+  while (s.length < size) s = "0" + s;
+  return s;
+};
+
+export const generateSku = async (category = "", variant = "") => {
+  const cat = category
+    .replace(/[^a-zA-Z0-9]/g, "")
     .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .slice(0, len) || "GEN";
+    .slice(0, 4) || "GEN";
 
-export const generateSku = async (category, variant) => {
-  const cat = normalize(category);
-  const varr = normalize(variant);
+  const varnt = variant
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toUpperCase()
+    .slice(0, 2) || "NA";
 
-  const prefix = variant ? `${cat}-${varr}` : cat;
+  const counterId = `SKU_${cat}_${varnt}`;
 
-  // find latest SKU with same prefix
-  const last = await Product.findOne({
-    sku: { $regex: `^${prefix}-\\d{4}$` },
-  })
-    .sort({ sku: -1 })
-    .select("sku")
-    .lean();
+  const counter = await Counter.findByIdAndUpdate(
+    counterId,
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
 
-  let next = 1;
-
-  if (last?.sku) {
-    const num = Number(last.sku.split("-").pop());
-    if (!isNaN(num)) next = num + 1;
-  }
-
-  const sequence = String(next).padStart(4, "0");
-
-  return `${prefix}-${sequence}`;
+  return `${cat}-${varnt}-${pad(counter.seq)}`;
 };

@@ -4,30 +4,27 @@ import {
   createInventory,
   updateOpeningInventory,
   resetInventoryForTest,
+  updateMinStock,
 } from "../controllers/inventoryController.js";
 import { protect } from "../middleware/authMiddleware.js";
-import { adminOnly } from "../middleware/roleMiddleware.js";
+import { superAdminOnly } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
 
-/* =========================
-   GET INVENTORY (DASHBOARD)
-========================= */
+/* DASHBOARD */
 router.get("/", protect, getAllInventory);
 
-/* =========================
-   CREATE INVENTORY
-========================= */
-router.post("/", protect, adminOnly, createInventory);
+/* INVENTORY */
+router.post("/", protect, superAdminOnly, createInventory);
+router.put("/opening", protect, superAdminOnly, updateOpeningInventory);
+router.put(
+  "/adjust-min-stock",
+  protect,
+  superAdminOnly,
+  updateMinStock
+);
 
-/* =========================
-   UPDATE OPENING STOCK
-========================= */
-router.put("/opening", protect, adminOnly, updateOpeningInventory);
-
-/* =========================
-   RESET INVENTORY (DEV)
-========================= */
-router.post("/reset", protect, adminOnly, resetInventoryForTest);
+/* DEV */
+router.post("/reset", protect, superAdminOnly, resetInventoryForTest);
 
 export default router;
