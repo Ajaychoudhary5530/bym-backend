@@ -4,16 +4,26 @@ import Product from "../models/Product.js";
 import Inventory from "../models/Inventory.js";
 import { generateSku } from "../utils/generateSku.js";
 
+const normalizeKey = (key) =>
+  key
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .toLowerCase();
+
 export const bulkUploadProducts = async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: "CSV file required" });
+  }
+
+  const rows = [];
+
   try {
-    if (!req.file) {
-      return res.status(400).json({ message: "CSV file required" });
-    }
-
-    const rows = [];
-
     fs.createReadStream(req.file.path)
-      .pipe(csv())
+      .pipe(
+        csv({
+          mapHeaders: ({ header }) => normalizeKey(header),
+        }),
+      )
       .on("data", (row) => rows.push(row))
       .on("end", async () => {
         try {
@@ -22,23 +32,30 @@ export const bulkUploadProducts = async (req, res) => {
             return res.status(400).json({ message: "CSV empty" });
           }
 
-          /* ---------- Normalize ---------- */
+          /* ---------- Normalize CSV ---------- */
           const normalized = rows
-            .map((r) => ({
-              name: r.name?.trim(),
-              sku: r.sku?.trim(),
-              category: (r.category || "").trim(),
-              variant: (r.variant || "").trim(),
-              unit: r.unit || "Nos",
-              minStock: Number(r.minStock) || 0,
-              openingQty: Number(r.openingQty) || 0,
-              openingPrice: Number(r.openingPrice) || 0,
-            }))
-            .filter((r) => r.name);
+            .map((r) => {
+              const name = String(r.name || "").trim();
+              const sku = String(r.sku || "").trim();
+
+              return {
+                name,
+                sku, // may be empty → SKU will be auto-generated
+                category: String(r.category || "").trim(),
+                variant: String(r.variant || "").trim(),
+                unit: String(r.unit || "Nos").trim(),
+                minStock: Number(r.minstock) || 0,
+                openingQty: Number(r.openingqty) || 0,
+                openingPrice: Number(r.openingprice) || 0,
+              };
+            })
+            .filter((r) => r.name); // ✅ ONLY name required
 
           if (!normalized.length) {
             fs.unlinkSync(req.file.path);
-            return res.status(400).json({ message: "No valid rows" });
+            return res.status(400).json({
+              message: "No valid rows found. Check CSV headers and values.",
+            });
           }
 
           /* ---------- Generate SKU if missing ---------- */
@@ -54,69 +71,69 @@ export const bulkUploadProducts = async (req, res) => {
           /* ---------- Existing products ---------- */
           const existingProducts = await Product.find(
             { sku: { $in: skus } },
-            { sku: 1 }
+            { sku: 1 },
           );
 
-          const existingSkuSet = new Set(
-            existingProducts.map((p) => p.sku)
-          );
+          const existingSkuSet = new Set(existingProducts.map((p) => p.sku));
 
-          /* ---------- Insert new products ---------- */
+          /* ---------- New products only ---------- */
           const newProducts = normalized.filter(
-            (p) => !existingSkuSet.has(p.sku)
+            (p) => !existingSkuSet.has(p.sku),
           );
 
-          let createdCount = 0;
+          let createdProducts = [];
 
+          /* ---------- SAFE INSERT (PARTIAL OK) ---------- */
           if (newProducts.length) {
-            const created = await Product.insertMany(
-              newProducts.map((p) => ({
-                name: p.name,
-                sku: p.sku,
-                category: p.category,
-                variant: p.variant,
-                unit: p.unit,
-                minStock: p.minStock,
-                uniqueKey: p.uniqueKey,
-              })),
-              { ordered: false }
-            );
-
-            createdCount = created.length;
+            try {
+              createdProducts = await Product.insertMany(
+                newProducts.map((p) => ({
+                  name: p.name,
+                  sku: p.sku,
+                  category: p.category,
+                  variant: p.variant,
+                  unit: p.unit,
+                  minStock: p.minStock,
+                  uniqueKey: p.uniqueKey,
+                })),
+                { ordered: false },
+              );
+            } catch (err) {
+              // ✅ THIS IS THE FIX
+              if (err.insertedDocs) {
+                createdProducts = err.insertedDocs;
+              } else {
+                throw err;
+              }
+            }
           }
 
           /* ---------- Ensure inventory ---------- */
           const allProducts = await Product.find(
             { sku: { $in: skus } },
-            { _id: 1, sku: 1 }
+            { _id: 1, sku: 1 },
           );
 
           const productIds = allProducts.map((p) => p._id);
 
           const existingInventory = await Inventory.find(
             { productId: { $in: productIds } },
-            { productId: 1 }
+            { productId: 1 },
           );
 
           const invSet = new Set(
-            existingInventory.map((i) => String(i.productId))
+            existingInventory.map((i) => String(i.productId)),
           );
 
           const inventories = allProducts
             .filter((p) => !invSet.has(String(p._id)))
             .map((p) => {
-              const source = normalized.find(
-                (x) => x.sku === p.sku
-              );
-
-              const qty = Number(source?.openingQty) || 0;
-              const price = Number(source?.openingPrice) || 0;
-
+              const source = normalized.find((x) => x.sku === p.sku);
               return {
                 productId: p._id,
-                openingQty: qty,
-                quantity: qty,
-                avgPurchasePrice: price,
+                openingQty: source?.openingQty || 0,
+                quantity: source?.openingQty || 0,
+                avgPurchasePrice: source?.openingPrice || 0,
               };
             });
 
@@ -126,19 +143,20 @@ export const bulkUploadProducts = async (req, res) => {
 
           fs.unlinkSync(req.file.path);
 
-          res.json({
+          return res.json({
             message: "Bulk upload successful",
-            productsInserted: createdCount,
+            productsInserted: createdProducts.length,
             inventoriesCreated: inventories.length,
           });
         } catch (err) {
           console.error("CSV PROCESS ERROR:", err);
           fs.unlinkSync(req.file.path);
-          res.status(500).json({ message: "CSV processing failed" });
+          return res.status(500).json({ message: "CSV processing failed" });
         }
       });
   } catch (err) {
     console.error("BULK UPLOAD ERROR:", err);
-    res.status(500).json({ message: "Bulk upload failed" });
+    fs.unlinkSync(req.file.path);
+    return res.status(500).json({ message: "Bulk upload failed" });
   }
 };

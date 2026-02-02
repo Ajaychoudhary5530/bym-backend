@@ -3,6 +3,22 @@ import Inventory from "../models/Inventory.js";
 import StockLog from "../models/StockLog.js";
 
 /* =========================
+   GET ALL INVENTORY (DASHBOARD)
+========================= */
+export const getAllInventory = async (req, res) => {
+  try {
+    const inventory = await Inventory.find()
+      .populate("productId", "name sku category variant unit minStock")
+      .sort({ createdAt: -1 });
+
+    res.json(inventory);
+  } catch (err) {
+    console.error("GET INVENTORY ERROR:", err);
+    res.status(500).json({ message: "Failed to fetch inventory" });
+  }
+};
+
+/* =========================
    CREATE INVENTORY
 ========================= */
 export const createInventory = async (req, res) => {
@@ -77,15 +93,15 @@ export const updateOpeningInventory = async (req, res) => {
 
     inventory.openingQty = qty;
     inventory.avgPurchasePrice = price;
+    inventory.quantity = qty; // 🔥 keep quantity in sync
 
     await inventory.save();
 
-    /* Audit log */
     await StockLog.create({
       productId,
       userId: req.user._id,
       type: "ADJUST",
-      adjustmentType: "INCREASE",
+      adjustmentType: qty >= oldQty ? "INCREASE" : "DECREASE",
       adjustmentReason:
         reason ||
         `Opening correction: Qty ${oldQty}→${qty}, Price ${oldPrice}→${price}`,
@@ -120,7 +136,6 @@ export const resetInventoryForTest = async (req, res) => {
     }
 
     inventory.quantity = inventory.openingQty;
-
     await inventory.save();
 
     await StockLog.deleteMany({ productId });

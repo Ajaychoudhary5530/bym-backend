@@ -13,6 +13,8 @@ import productBulkRoutes from "./routes/productBulkRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
 import resetRoutes from "./routes/resetRoutes.js";
 import inventoryRoutes from "./routes/inventoryRoutes.js";
+import devTestRoutes from "./routes/devTestRoutes.js";
+
 
 
 dotenv.config();
@@ -57,6 +59,8 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/admin/reset", resetRoutes);
 console.log("🔥 INVENTORY ROUTES REGISTERING");
 app.use("/api/inventory", inventoryRoutes);
+app.use("/api/dev", devTestRoutes);
+
 
 
 /* =========================
