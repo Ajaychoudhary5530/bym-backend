@@ -2,6 +2,76 @@ import Product from "../models/Product.js";
 import Inventory from "../models/Inventory.js";
 
 /* =========================
+   CREATE PRODUCT (ADMIN / SUPERADMIN)
+========================= */
+export const createProduct = async (req, res) => {
+  try {
+    const {
+      name,
+      sku,
+      category,
+      variant,
+      unit,
+      minStock,
+      openingQty,
+    } = req.body;
+
+    if (!name?.trim()) {
+      return res.status(400).json({ message: "Product name required" });
+    }
+
+    /* =========================
+       SKU AUTO-GENERATION
+       If SKU not provided
+    ========================= */
+    let finalSku = sku?.trim();
+
+    if (!finalSku) {
+      finalSku = name
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 30);
+    }
+
+    const exists = await Product.findOne({ sku: finalSku });
+    if (exists) {
+      return res.status(400).json({ message: "SKU already exists" });
+    }
+
+    const product = await Product.create({
+      name: name.trim(),
+      sku: finalSku,
+      category: category?.trim() || "",
+      variant: variant?.trim() || "",
+      unit: unit || "Nos",
+      minStock: Number(minStock) || 0,
+      uniqueKey: finalSku.toLowerCase(),
+    });
+
+    /* =========================
+       CREATE INVENTORY (NO PRICE)
+    ========================= */
+    const qty = Number(openingQty) || 0;
+
+    await Inventory.create({
+      productId: product._id,
+      openingQty: qty,
+      quantity: qty,
+      avgPurchasePrice: 0, // 🔒 price comes only via Stock IN / superadmin correction
+    });
+
+    res.status(201).json({
+      message: "Product created successfully",
+      product,
+    });
+  } catch (err) {
+    console.error("CREATE PRODUCT ERROR:", err);
+    res.status(500).json({ message: "Failed to create product" });
+  }
+};
+
+/* =========================
    PRODUCTS WITH STOCK (FAST DASHBOARD)
 ========================= */
 export const getProductsWithStock = async (req, res) => {
@@ -10,9 +80,6 @@ export const getProductsWithStock = async (req, res) => {
     const limit = Number(req.query.limit) || 20;
     const search = req.query.search || "";
 
-    /* =========================
-       SEARCH FILTER
-    ========================= */
     const filter = {};
     if (search) {
       filter.$or = [
@@ -27,25 +94,19 @@ export const getProductsWithStock = async (req, res) => {
       .skip((page - 1) * limit)
       .limit(limit)
       .sort({ createdAt: -1 })
-      .lean(); // 🔥 faster
+      .lean();
 
     const productIds = products.map((p) => p._id);
 
-    /* =========================
-       INVENTORY (SOURCE OF TRUTH)
-    ========================= */
     const inventories = await Inventory.find({
       productId: { $in: productIds },
-    }).lean(); // 🔥 faster
+    }).lean();
 
     const inventoryMap = {};
     inventories.forEach((inv) => {
       inventoryMap[String(inv.productId)] = inv;
     });
 
-    /* =========================
-       DASHBOARD RESPONSE
-    ========================= */
     const data = products.map((p) => {
       const inv = inventoryMap[String(p._id)];
 
@@ -64,7 +125,6 @@ export const getProductsWithStock = async (req, res) => {
         openingQty,
         currentQty,
 
-        // counts removed from logs for speed
         qtyIn: 0,
         amazonOut: 0,
         othersOut: 0,
