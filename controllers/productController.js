@@ -75,6 +75,7 @@ export const getProductsWithStock = async (req, res) => {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
     const search = req.query.search || "";
+    const topSelling = req.query.topSelling === "1";
 
     const filter = {};
     if (search) {
@@ -87,8 +88,6 @@ export const getProductsWithStock = async (req, res) => {
     const total = await Product.countDocuments(filter);
 
     const products = await Product.find(filter)
-      .skip((page - 1) * limit)
-      .limit(limit)
       .sort({ createdAt: -1 })
       .lean();
 
@@ -103,12 +102,15 @@ export const getProductsWithStock = async (req, res) => {
       inventoryMap[String(inv.productId)] = inv;
     });
 
-    const data = products.map((p) => {
+    let data = products.map((p) => {
       const inv = inventoryMap[String(p._id)];
 
       const openingQty = inv?.openingQty || 0;
       const currentQty = inv?.quantity || 0;
       const avgPurchasePrice = inv?.avgPurchasePrice || 0;
+
+      const amazonOut = inv?.amazonOut || 0;
+      const othersOut = inv?.othersOut || 0;
 
       return {
         _id: p._id,
@@ -122,17 +124,40 @@ export const getProductsWithStock = async (req, res) => {
         currentQty,
 
         qtyIn: 0,
-        amazonOut: 0,
-        othersOut: 0,
+        amazonOut,
+        othersOut,
 
+        totalSold: amazonOut + othersOut, // 🔥 IMPORTANT
         minStock: p.minStock || 0,
         avgPurchasePrice,
         stockValue: Number((currentQty * avgPurchasePrice).toFixed(2)),
       };
     });
 
+    /* =========================
+       🔥 TOP 50 SELLING FILTER
+    ========================= */
+    if (topSelling) {
+      data = data
+        .sort((a, b) => b.totalSold - a.totalSold)
+        .slice(0, 50);
+
+      return res.json({
+        data,
+        page: 1,
+        pages: 1,
+        total: data.length,
+      });
+    }
+
+    /* =========================
+       NORMAL PAGINATION
+    ========================= */
+    const start = (page - 1) * limit;
+    const end = start + limit;
+
     res.json({
-      data,
+      data: data.slice(start, end),
       page,
       pages: Math.ceil(total / limit),
       total,
