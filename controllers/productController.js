@@ -1,5 +1,6 @@
 import Product from "../models/Product.js";
 import Inventory from "../models/Inventory.js";
+import { generateSku } from "../utils/generateSku.js";
 
 /* =========================
    CREATE PRODUCT (ADMIN / SUPERADMIN)
@@ -22,16 +23,11 @@ export const createProduct = async (req, res) => {
 
     /* =========================
        SKU AUTO-GENERATION
-       If SKU not provided
     ========================= */
     let finalSku = sku?.trim();
 
     if (!finalSku) {
-      finalSku = name
-        .toUpperCase()
-        .replace(/[^A-Z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 30);
+      finalSku = await generateSku(category, variant);
     }
 
     const exists = await Product.findOne({ sku: finalSku });
@@ -50,7 +46,7 @@ export const createProduct = async (req, res) => {
     });
 
     /* =========================
-       CREATE INVENTORY (NO PRICE)
+       CREATE INVENTORY
     ========================= */
     const qty = Number(openingQty) || 0;
 
@@ -58,7 +54,7 @@ export const createProduct = async (req, res) => {
       productId: product._id,
       openingQty: qty,
       quantity: qty,
-      avgPurchasePrice: 0, // 🔒 price comes only via Stock IN / superadmin correction
+      avgPurchasePrice: 0,
     });
 
     res.status(201).json({
@@ -119,8 +115,8 @@ export const getProductsWithStock = async (req, res) => {
         name: p.name,
         sku: p.sku,
         category: p.category,
-        unit: p.unit,
         variant: p.variant,
+        unit: p.unit,
 
         openingQty,
         currentQty,

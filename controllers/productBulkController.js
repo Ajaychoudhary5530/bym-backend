@@ -2,6 +2,7 @@ import fs from "fs";
 import csv from "csv-parser";
 import Product from "../models/Product.js";
 import Inventory from "../models/Inventory.js";
+import { generateSku } from "../utils/generateSku.js";
 
 export const bulkUploadProducts = async (req, res) => {
   try {
@@ -32,15 +33,20 @@ export const bulkUploadProducts = async (req, res) => {
               minStock: Number(r.minStock) || 0,
               openingQty: Number(r.openingQty) || 0,
               openingPrice: Number(r.openingPrice) || 0,
-              uniqueKey: r.sku?.trim()?.toLowerCase(),
             }))
-            .filter((r) => r.name && r.sku);
+            .filter((r) => r.name);
 
           if (!normalized.length) {
             fs.unlinkSync(req.file.path);
-            return res.status(400).json({
-              message: "No valid rows",
-            });
+            return res.status(400).json({ message: "No valid rows" });
+          }
+
+          /* ---------- Generate SKU if missing ---------- */
+          for (const row of normalized) {
+            if (!row.sku) {
+              row.sku = await generateSku(row.category, row.variant);
+            }
+            row.uniqueKey = row.sku.toLowerCase();
           }
 
           const skus = normalized.map((p) => p.sku);
@@ -115,9 +121,7 @@ export const bulkUploadProducts = async (req, res) => {
             });
 
           if (inventories.length) {
-            await Inventory.insertMany(inventories, {
-              ordered: false,
-            });
+            await Inventory.insertMany(inventories, { ordered: false });
           }
 
           fs.unlinkSync(req.file.path);
