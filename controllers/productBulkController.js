@@ -5,10 +5,7 @@ import Inventory from "../models/Inventory.js";
 import { generateSku } from "../utils/generateSku.js";
 
 const normalizeKey = (key) =>
-  key
-    .replace(/^\uFEFF/, "")
-    .trim()
-    .toLowerCase();
+  key.replace(/^\uFEFF/, "").trim().toLowerCase();
 
 export const bulkUploadProducts = async (req, res) => {
   if (!req.file) {
@@ -22,7 +19,7 @@ export const bulkUploadProducts = async (req, res) => {
       .pipe(
         csv({
           mapHeaders: ({ header }) => normalizeKey(header),
-        }),
+        })
       )
       .on("data", (row) => rows.push(row))
       .on("end", async () => {
@@ -32,15 +29,14 @@ export const bulkUploadProducts = async (req, res) => {
             return res.status(400).json({ message: "CSV empty" });
           }
 
-          /* ---------- Normalize CSV ---------- */
+          /* ---------- Normalize CSV (IGNORE CSV SKU) ---------- */
           const normalized = rows
             .map((r) => {
               const name = String(r.name || "").trim();
-              const sku = String(r.sku || "").trim();
 
               return {
                 name,
-                sku, // may be empty → SKU will be auto-generated
+                sku: "", // 🔥 FORCE AUTO SKU
                 category: String(r.category || "").trim(),
                 variant: String(r.variant || "").trim(),
                 unit: String(r.unit || "Nos").trim(),
@@ -49,7 +45,7 @@ export const bulkUploadProducts = async (req, res) => {
                 openingPrice: Number(r.openingprice) || 0,
               };
             })
-            .filter((r) => r.name); // ✅ ONLY name required
+            .filter((r) => r.name); // only name required
 
           if (!normalized.length) {
             fs.unlinkSync(req.file.path);
@@ -58,11 +54,9 @@ export const bulkUploadProducts = async (req, res) => {
             });
           }
 
-          /* ---------- Generate SKU if missing ---------- */
+          /* ---------- ALWAYS GENERATE SKU ---------- */
           for (const row of normalized) {
-            if (!row.sku) {
-              row.sku = await generateSku(row.category, row.variant);
-            }
+            row.sku = await generateSku(row.category, row.variant);
             row.uniqueKey = row.sku.toLowerCase();
           }
 
@@ -71,14 +65,14 @@ export const bulkUploadProducts = async (req, res) => {
           /* ---------- Existing products ---------- */
           const existingProducts = await Product.find(
             { sku: { $in: skus } },
-            { sku: 1 },
+            { sku: 1 }
           );
 
           const existingSkuSet = new Set(existingProducts.map((p) => p.sku));
 
           /* ---------- New products only ---------- */
           const newProducts = normalized.filter(
-            (p) => !existingSkuSet.has(p.sku),
+            (p) => !existingSkuSet.has(p.sku)
           );
 
           let createdProducts = [];
@@ -96,10 +90,10 @@ export const bulkUploadProducts = async (req, res) => {
                   minStock: p.minStock,
                   uniqueKey: p.uniqueKey,
                 })),
-                { ordered: false },
+                { ordered: false }
               );
             } catch (err) {
-              // ✅ THIS IS THE FIX
+              // ✅ allow partial success
               if (err.insertedDocs) {
                 createdProducts = err.insertedDocs;
               } else {
@@ -111,18 +105,18 @@ export const bulkUploadProducts = async (req, res) => {
           /* ---------- Ensure inventory ---------- */
           const allProducts = await Product.find(
             { sku: { $in: skus } },
-            { _id: 1, sku: 1 },
+            { _id: 1, sku: 1 }
           );
 
           const productIds = allProducts.map((p) => p._id);
 
           const existingInventory = await Inventory.find(
             { productId: { $in: productIds } },
-            { productId: 1 },
+            { productId: 1 }
           );
 
           const invSet = new Set(
-            existingInventory.map((i) => String(i.productId)),
+            existingInventory.map((i) => String(i.productId))
           );
 
           const inventories = allProducts
