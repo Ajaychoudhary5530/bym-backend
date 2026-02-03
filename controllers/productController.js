@@ -1,9 +1,10 @@
 import Product from "../models/Product.js";
 import Inventory from "../models/Inventory.js";
+import StockLog from "../models/StockLog.js";
 import { generateSku } from "../utils/generateSku.js";
 
 /* =========================
-   CREATE PRODUCT (ADMIN / SUPERADMIN)
+   CREATE PRODUCT
 ========================= */
 export const createProduct = async (req, res) => {
   try {
@@ -21,11 +22,7 @@ export const createProduct = async (req, res) => {
       return res.status(400).json({ message: "Product name required" });
     }
 
-    /* =========================
-       SKU AUTO-GENERATION
-    ========================= */
     let finalSku = sku?.trim();
-
     if (!finalSku) {
       finalSku = await generateSku(category, variant);
     }
@@ -45,9 +42,6 @@ export const createProduct = async (req, res) => {
       uniqueKey: finalSku.toLowerCase(),
     });
 
-    /* =========================
-       CREATE INVENTORY
-    ========================= */
     const qty = Number(openingQty) || 0;
 
     await Inventory.create({
@@ -68,7 +62,7 @@ export const createProduct = async (req, res) => {
 };
 
 /* =========================
-   PRODUCTS WITH STOCK (FAST DASHBOARD)
+   PRODUCTS WITH STOCK (DASHBOARD)
 ========================= */
 export const getProductsWithStock = async (req, res) => {
   try {
@@ -93,6 +87,9 @@ export const getProductsWithStock = async (req, res) => {
 
     const productIds = products.map((p) => p._id);
 
+    /* =========================
+       INVENTORY MAP
+    ========================= */
     const inventories = await Inventory.find({
       productId: { $in: productIds },
     }).lean();
@@ -102,15 +99,60 @@ export const getProductsWithStock = async (req, res) => {
       inventoryMap[String(inv.productId)] = inv;
     });
 
+    /* =========================
+       STOCK LOG AGGREGATION
+    ========================= */
+    const stockAgg = await StockLog.aggregate([
+      { $match: { productId: { $in: productIds } } },
+      {
+        $group: {
+          _id: {
+            productId: "$productId",
+            type: "$type",
+            source: "$source",
+          },
+          totalQty: { $sum: "$quantity" },
+        },
+      },
+    ]);
+
+    const stockMap = {};
+    stockAgg.forEach((row) => {
+      const pid = String(row._id.productId);
+      if (!stockMap[pid]) {
+        stockMap[pid] = {
+          qtyIn: 0,
+          amazonOut: 0,
+          othersOut: 0,
+        };
+      }
+
+      if (row._id.type === "IN") {
+        stockMap[pid].qtyIn += row.totalQty;
+      }
+
+      if (row._id.type === "OUT") {
+        if (row._id.source === "AMAZON") {
+          stockMap[pid].amazonOut += row.totalQty;
+        } else {
+          stockMap[pid].othersOut += row.totalQty;
+        }
+      }
+    });
+
+    /* =========================
+       BUILD RESPONSE
+    ========================= */
     let data = products.map((p) => {
-      const inv = inventoryMap[String(p._id)];
+      const inv = inventoryMap[String(p._id)] || {};
+      const stock = stockMap[String(p._id)] || {};
 
-      const openingQty = inv?.openingQty || 0;
-      const currentQty = inv?.quantity || 0;
-      const avgPurchasePrice = inv?.avgPurchasePrice || 0;
+      const openingQty = inv.openingQty || 0;
+      const currentQty = inv.quantity || 0;
+      const avgPurchasePrice = inv.avgPurchasePrice || 0;
 
-      const amazonOut = inv?.amazonOut || 0;
-      const othersOut = inv?.othersOut || 0;
+      const amazonOut = stock.amazonOut || 0;
+      const othersOut = stock.othersOut || 0;
 
       return {
         _id: p._id,
@@ -123,11 +165,11 @@ export const getProductsWithStock = async (req, res) => {
         openingQty,
         currentQty,
 
-        qtyIn: 0,
+        qtyIn: stock.qtyIn || 0,
         amazonOut,
         othersOut,
 
-        totalSold: amazonOut + othersOut, // 🔥 IMPORTANT
+        totalSold: amazonOut + othersOut, // 🔥 USED FOR TOP SELLING
         minStock: p.minStock || 0,
         avgPurchasePrice,
         stockValue: Number((currentQty * avgPurchasePrice).toFixed(2)),
@@ -135,7 +177,7 @@ export const getProductsWithStock = async (req, res) => {
     });
 
     /* =========================
-       🔥 TOP 50 SELLING FILTER
+       TOP 50 SELLING
     ========================= */
     if (topSelling) {
       data = data
@@ -151,7 +193,7 @@ export const getProductsWithStock = async (req, res) => {
     }
 
     /* =========================
-       NORMAL PAGINATION
+       PAGINATION
     ========================= */
     const start = (page - 1) * limit;
     const end = start + limit;
